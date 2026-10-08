@@ -252,12 +252,11 @@ func startSigner(t *testing.T) *signerFixture {
 		t.Fatalf("NewSSHKeygenSigner: %v", err)
 	}
 	cfg := server.Config{
-		KeyPath:        keyPath,
-		CommitterName:  installName,
-		CommitterEmail: installEmail,
-		Allowlist:      server.Allowlist{installVMIdentity},
-		RatePerMin:     6000,
-		RateBurst:      1000,
+		KeyPath:    keyPath,
+		Committer:  server.Committer{Name: installName, Email: installEmail},
+		Allowlist:  server.Allowlist{installVMIdentity},
+		RatePerMin: 6000,
+		RateBurst:  1000,
 	}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	srv := server.New(signer, pubLine, cfg, logger)
@@ -407,22 +406,34 @@ func TestInstallClientProvisionsIdempotently(t *testing.T) {
 
 	binPath := filepath.Join(sandbox, ".local", "bin", "git-remote-sign")
 	pubPath := filepath.Join(sandbox, ".config", "git-remote-signer", "signing.pub")
+	allowedPath := filepath.Join(sandbox, ".config", "git-remote-signer", "allowed_signers")
 	assertMode(t, binPath, 0o755)
 	assertMode(t, pubPath, 0o644)
+	assertMode(t, allowedPath, 0o644)
 	if got, err := os.ReadFile(pubPath); err != nil || strings.TrimSpace(string(got)) != s.pubLine {
 		t.Fatalf("installed public key = %q, err=%v, want %q", got, err, s.pubLine)
+	}
+	// The allowed-signers file maps the pinned committer email to the pinned
+	// key, so local `git verify-commit` works on a fresh VM without manual setup.
+	fields := strings.Fields(s.pubLine)
+	wantAllowed := installEmail + " " + fields[0] + " " + fields[1] + "\n"
+	if got, err := os.ReadFile(allowedPath); err != nil || string(got) != wantAllowed {
+		t.Fatalf("installed allowed-signers file = %q, err=%v, want %q", got, err, wantAllowed)
 	}
 	assertNoPrivateKey(t, sandbox)
 	assertEmptyDir(t, filepath.Join(sandbox, "tmp"))
 
 	cfg := gitGlobal(t, sandbox, "config", "--global", "--list")
+	// git config --list lowercases variable names, so the allowed-signers key
+	// is listed as gpg.ssh.allowedsignersfile.
 	for key, want := range map[string]string{
-		"gpg.format":      "ssh",
-		"gpg.ssh.program": binPath,
-		"commit.gpgsign":  "true",
-		"user.signingkey": pubPath,
-		"user.name":       installName,
-		"user.email":      installEmail,
+		"gpg.format":                 "ssh",
+		"gpg.ssh.program":            binPath,
+		"commit.gpgsign":             "true",
+		"user.signingkey":            pubPath,
+		"gpg.ssh.allowedsignersfile": allowedPath,
+		"user.name":                  installName,
+		"user.email":                 installEmail,
 	} {
 		if got := configValue(t, cfg, key); got != want {
 			t.Errorf("git config %s = %q, want %q", key, got, want)
