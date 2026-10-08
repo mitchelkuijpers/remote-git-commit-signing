@@ -242,10 +242,11 @@ Typical failures and fixes:
 | `bad permissions` / `UNPROTECTED PRIVATE KEY FILE` | key is group/world readable | `sudo chmod 0600 /var/lib/git-signer/signing_key` (and fix ownership) |
 
 Runtime rejections (the service is up but refuses to sign) are recorded as
-`"status":"rejected"` audit lines with the requesting VM identity. The usual
-cause is a missing entry in `SIGNER_ALLOWLIST`; add the VM name (or a glob) and
-restart the service. Rate limiting shows up the same way once a VM exceeds
-`SIGNER_RATE_PER_MIN` / `SIGNER_RATE_BURST`.
+`"outcome":"rejected"` audit lines with the requesting VM identity and HTTP status
+(`401` when the platform identity header is missing, `403` when it is not
+allowlisted). The usual cause is a missing entry in `SIGNER_ALLOWLIST`; add the
+VM name (or a glob) and restart the service. Rate limiting shows up the same way
+(`429`) once a VM exceeds `SIGNER_RATE_PER_MIN` / `SIGNER_RATE_BURST`.
 
 ## Hardening summary
 

@@ -103,7 +103,7 @@ func TestReadyzNotReadyWithoutKey(t *testing.T) {
 
 func TestReadyzReadyWithKey(t *testing.T) {
 	signer, publicKey := newSigner(t)
-	ts := newTestHTTPServer(t, signer, publicKey, server.Config{})
+	ts := newTestHTTPServer(t, signer, publicKey, signConfig())
 
 	resp, body := get(t, ts.URL+"/readyz")
 	if resp.StatusCode != http.StatusOK {
@@ -116,7 +116,7 @@ func TestReadyzReadyWithKey(t *testing.T) {
 
 func TestPublicKeyServesDerivedKey(t *testing.T) {
 	signer, publicKey := newSigner(t)
-	ts := newTestHTTPServer(t, signer, publicKey, server.Config{})
+	ts := newTestHTTPServer(t, signer, publicKey, signConfig())
 
 	resp, body := get(t, ts.URL+"/v1/public-key")
 	if resp.StatusCode != http.StatusOK {
@@ -142,7 +142,7 @@ func TestPublicKeyNotServedWithoutKey(t *testing.T) {
 
 func TestSignRoundTrip(t *testing.T) {
 	signer, publicKey := newSigner(t)
-	ts := newTestHTTPServer(t, signer, publicKey, server.Config{})
+	ts := newTestHTTPServer(t, signer, publicKey, signConfig())
 
 	payload := []byte("tree 4b825dc642cb6eb9a060e54bf8d69288fbee4904\nauthor Test <test@example.com> 1700000000 +0000\ncommitter Test <test@example.com> 1700000000 +0000\n\nsubject line\n")
 
@@ -166,7 +166,7 @@ func TestSignRoundTrip(t *testing.T) {
 }
 
 func TestSignRefusesWithoutKey(t *testing.T) {
-	ts := newTestHTTPServer(t, nil, "", server.Config{})
+	ts := newTestHTTPServer(t, nil, "", signConfig())
 
 	resp, body := postSign(t, ts.URL, []byte("payload"))
 	if resp.StatusCode != http.StatusServiceUnavailable {
@@ -174,29 +174,29 @@ func TestSignRefusesWithoutKey(t *testing.T) {
 	}
 }
 
-// postSign sends payload to the sign endpoint as an octet-stream.
+// postSign sends payload to the sign endpoint as an octet-stream, carrying the
+// identity authorized by signConfig's allowlist.
 func postSign(t *testing.T, baseURL string, payload []byte) (*http.Response, string) {
 	t.Helper()
-	req, err := http.NewRequest(http.MethodPost, baseURL+"/v1/sign", bytes.NewReader(payload))
-	if err != nil {
-		t.Fatalf("new sign request: %v", err)
-	}
-	req.Header.Set("Content-Type", "application/octet-stream")
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatalf("POST /v1/sign: %v", err)
-	}
-	t.Cleanup(func() { resp.Body.Close() })
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		t.Fatalf("read sign response: %v", err)
-	}
-	return resp, string(body)
+	return postSignAs(t, baseURL, testVM, payload)
+}
+
+// testVM is the source-VM identity carried by postSign and admitted by
+// signConfig.
+const testVM = "test-vm"
+
+// signConfig returns a server config that admits testVM to POST /v1/sign.
+// Authorization is fail-closed (ticket #7): tests that exercise signing must
+// configure an allowlist and carry an identity.
+func signConfig() server.Config {
+	return server.Config{Allowlist: server.Allowlist{testVM}}
 }
 
 func TestSignRejectsOversizedBody(t *testing.T) {
 	signer, publicKey := newSigner(t)
-	ts := newTestHTTPServer(t, signer, publicKey, server.Config{MaxPayloadBytes: 64})
+	cfg := signConfig()
+	cfg.MaxPayloadBytes = 64
+	ts := newTestHTTPServer(t, signer, publicKey, cfg)
 
 	resp, body := postSign(t, ts.URL, bytes.Repeat([]byte("A"), 65))
 	if resp.StatusCode != http.StatusRequestEntityTooLarge {
@@ -215,9 +215,10 @@ func TestSignRejectsOversizedBody(t *testing.T) {
 
 func TestSignRejectsUnreadableBody(t *testing.T) {
 	signer, publicKey := newSigner(t)
-	h := server.New(signer, publicKey, server.Config{}, discardLogger())
+	h := server.New(signer, publicKey, signConfig(), discardLogger())
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/sign", failingReader{err: errors.New("client read failure sentinel")})
+	req.Header.Set("X-Exedev-Source-Vm", testVM)
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 
@@ -235,7 +236,7 @@ func TestSignInternalFailureReturns500(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewSSHKeygenSigner: %v", err)
 	}
-	ts := newTestHTTPServer(t, signer, "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIDummyDummyDummy", server.Config{})
+	ts := newTestHTTPServer(t, signer, "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIDummyDummyDummy", signConfig())
 
 	resp, body := postSign(t, ts.URL, []byte("payload"))
 	if resp.StatusCode != http.StatusInternalServerError {
@@ -248,7 +249,7 @@ func TestSignInternalFailureReturns500(t *testing.T) {
 
 func TestSignRejectsWrongMethod(t *testing.T) {
 	signer, publicKey := newSigner(t)
-	ts := newTestHTTPServer(t, signer, publicKey, server.Config{})
+	ts := newTestHTTPServer(t, signer, publicKey, signConfig())
 
 	resp, _ := get(t, ts.URL+"/v1/sign")
 	if resp.StatusCode != http.StatusMethodNotAllowed {
@@ -270,7 +271,9 @@ func TestResponsesNeverLeakPrivateKey(t *testing.T) {
 	if err != nil {
 		t.Fatalf("PublicKey: %v", err)
 	}
-	ts := newTestHTTPServer(t, signer, publicKey, server.Config{MaxPayloadBytes: 32})
+	cfg := signConfig()
+	cfg.MaxPayloadBytes = 32
+	ts := newTestHTTPServer(t, signer, publicKey, cfg)
 
 	assertNoKeyMaterial := func(t *testing.T, body string) {
 		t.Helper()
@@ -291,8 +294,9 @@ func TestResponsesNeverLeakPrivateKey(t *testing.T) {
 	assertNoKeyMaterial(t, oversizeBody)
 
 	rec := httptest.NewRecorder()
-	server.New(signer, publicKey, server.Config{}, discardLogger()).
-		ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/v1/sign", failingReader{err: errors.New("boom")}))
+	req := httptest.NewRequest(http.MethodPost, "/v1/sign", failingReader{err: errors.New("boom")})
+	req.Header.Set("X-Exedev-Source-Vm", testVM)
+	server.New(signer, publicKey, signConfig(), discardLogger()).ServeHTTP(rec, req)
 	assertNoKeyMaterial(t, rec.Body.String())
 }
 

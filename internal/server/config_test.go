@@ -67,3 +67,57 @@ func TestLoadConfigRejectsInvalidPort(t *testing.T) {
 		})
 	}
 }
+
+func TestLoadConfigAllowlistDefaultsToNobody(t *testing.T) {
+	cfg, err := server.LoadConfig(mapEnv(map[string]string{"SIGNER_KEY_PATH": "/keys/signing_key"}))
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	// Fail closed: an unset allowlist admits no VM identity.
+	if len(cfg.Allowlist) != 0 {
+		t.Fatalf("Allowlist = %v, want empty (refuse everyone)", cfg.Allowlist)
+	}
+	if cfg.RatePerMin != server.DefaultRatePerMin || cfg.RateBurst != server.DefaultRateBurst {
+		t.Fatalf("rate limits = %d/%d, want defaults %d/%d",
+			cfg.RatePerMin, cfg.RateBurst, server.DefaultRatePerMin, server.DefaultRateBurst)
+	}
+}
+
+func TestLoadConfigParsesAllowlistAndRateLimits(t *testing.T) {
+	cfg, err := server.LoadConfig(mapEnv(map[string]string{
+		"SIGNER_KEY_PATH":     "/keys/signing_key",
+		"SIGNER_ALLOWLIST":    " agent-a, agent-*, ,exact-vm ",
+		"SIGNER_RATE_PER_MIN": "120",
+		"SIGNER_RATE_BURST":   "5",
+	}))
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	want := server.Allowlist{"agent-a", "agent-*", "exact-vm"}
+	if len(cfg.Allowlist) != len(want) {
+		t.Fatalf("Allowlist = %v, want %v", cfg.Allowlist, want)
+	}
+	for i := range want {
+		if cfg.Allowlist[i] != want[i] {
+			t.Fatalf("Allowlist = %v, want %v", cfg.Allowlist, want)
+		}
+	}
+	if cfg.RatePerMin != 120 || cfg.RateBurst != 5 {
+		t.Fatalf("rate limits = %d/%d, want 120/5", cfg.RatePerMin, cfg.RateBurst)
+	}
+}
+
+func TestLoadConfigRejectsInvalidRateLimits(t *testing.T) {
+	for _, env := range []string{"SIGNER_RATE_PER_MIN", "SIGNER_RATE_BURST"} {
+		for _, value := range []string{"abc", "0", "-1"} {
+			t.Run(env+"="+value, func(t *testing.T) {
+				if _, err := server.LoadConfig(mapEnv(map[string]string{
+					"SIGNER_KEY_PATH": "/keys/signing_key",
+					env:               value,
+				})); err == nil {
+					t.Fatalf("LoadConfig with %s=%q = nil error, want error", env, value)
+				}
+			})
+		}
+	}
+}
