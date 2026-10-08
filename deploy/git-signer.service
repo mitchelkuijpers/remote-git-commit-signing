@@ -1,0 +1,81 @@
+[Unit]
+Description=Remote Git commit signing service (git-signer-server)
+Documentation=https://github.com/mitchelkuijpers/remote-git-commit-signing/blob/master/docs/key-lifecycle.md
+After=network-online.target
+Wants=network-online.target
+# Give up after repeated crash loops instead of restarting forever; the
+# failure (for example a missing or loosely-permissioned key) stays visible in
+# journald.
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=git-signer
+Group=git-signer
+
+# Configuration comes from an operator-owned env file; the signing key itself
+# is only ever read from disk by path. Never pass key material in the
+# environment or on the command line.
+#
+# Settings understood by the server (see docs/key-lifecycle.md):
+#   SIGNER_KEY_PATH           required   path to the private signing key
+#   SIGNER_COMMITTER_NAME     required   pinned committer name
+#   SIGNER_COMMITTER_EMAIL    required   pinned committer email (must be a
+#                                        verified email on the GitLab account)
+#   SIGNER_ALLOWLIST          required   comma-separated VM identities (exact
+#                                        names or path.Match globs) allowed to
+#                                        sign; empty means deny everyone
+#   SIGNER_PORT               optional   listen port (default 8000)
+#   SIGNER_RATE_PER_MIN       optional   sustained per-VM signing rate
+#   SIGNER_RATE_BURST         optional   per-VM burst capacity
+EnvironmentFile=-/etc/git-signer/git-signer.env
+Environment=SIGNER_KEY_PATH=/var/lib/git-signer/signing_key
+
+ExecStart=/usr/local/bin/git-signer-server
+
+# Restart on unexpected failures, but not on a clean (operator-requested) stop.
+Restart=on-failure
+RestartSec=2s
+
+# Graceful stop: SIGTERM lets in-flight signatures finish (the server drains
+# for up to 25s) before systemd escalates to SIGKILL. TimeoutStopSec must stay
+# larger than the server's own shutdown timeout.
+KillSignal=SIGTERM
+KillMode=mixed
+TimeoutStopSec=30s
+
+# --- Hardening -----------------------------------------------------------
+# The service runs unprivileged and needs no capabilities at all.
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+
+# No write access to the host filesystem: the key directory is readable
+# (ProtectSystem=strict makes it read-only) and ssh-keygen scratch files live
+# in the private, per-service /tmp.
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectKernelLogs=yes
+ProtectKernelModules=yes
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+ProtectProc=invisible
+ProcSubset=pid
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target
