@@ -122,7 +122,10 @@ Agent VMs do not fetch the public key from the signer and trust it. They pin it:
   fetches against the pinned value and must never blindly accept a new key.
 
 **Whenever the signing key changes, every client's pinned key must change with
-it** — this is the first thing to update during rotation (see below).
+it** — this is the first thing to update during rotation (see below). Agent VMs
+install the pinned key with `deploy/install-client.sh`, which also cross-checks it
+against `GET /v1/public-key` and fails hard on mismatch; re-run it after a
+rotation.
 
 ## Backup
 
