@@ -47,9 +47,9 @@ type Config struct {
 	// SignTimeout bounds a single signing request. Defaults to
 	// signing.DefaultTimeout.
 	SignTimeout time.Duration
-	// CommitterName and CommitterEmail are the pinned committer identity. They
-	// are parsed here but deliberately not enforced yet: commit validation is
-	// ticket #6's slice.
+	// CommitterName and CommitterEmail are the pinned committer identity.
+	// Both are required with no default: POST /v1/sign only signs commit
+	// objects naming exactly this identity.
 	CommitterName  string
 	CommitterEmail string
 	// Allowlist is the set of VM identities permitted to sign, given as exact
@@ -78,6 +78,16 @@ func LoadConfig(getenv func(string) string) (Config, error) {
 
 	if cfg.KeyPath == "" {
 		return Config{}, fmt.Errorf("%s is required", envKeyPath)
+	}
+
+	// The pinned committer identity is required with no default: the signer
+	// refuses to sign a commit that names anything else, so a deployment
+	// without it could never sign anything.
+	if cfg.CommitterName == "" {
+		return Config{}, fmt.Errorf("%s is required", envCommitterName)
+	}
+	if cfg.CommitterEmail == "" {
+		return Config{}, fmt.Errorf("%s is required", envCommitterEmail)
 	}
 
 	if raw := getenv(envPort); raw != "" {

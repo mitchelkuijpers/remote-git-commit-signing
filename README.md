@@ -42,18 +42,24 @@ API, security model, and milestones.
 - [Git SSH signing interface (spike findings)](docs/git-ssh-signing-interface.md) —
   empirically verified `gpg.ssh.program` behavior that the client must implement
   (sign argv, two-step verify protocol, git's exit-code semantics).
+- [Signing key lifecycle](docs/key-lifecycle.md) — server deployment, key generation,
+  GitLab registration (Signing-only), backup, rotation, and recovery.
 
 Additional docs (`architecture`, `exe-dev-setup`, `gitlab-setup`, `security`,
 `troubleshooting`) will be added as implementation proceeds.
 
 ## Running the signer locally
 
-`git-signer-server` listens on port `8000` (override with `SIGNER_PORT`) and needs one
-required setting, the path to the private signing key (`SIGNER_KEY_PATH`, no default):
+`git-signer-server` listens on port `8000` (override with `SIGNER_PORT`) and needs three
+required settings with no defaults: the path to the private signing key
+(`SIGNER_KEY_PATH`) and the pinned committer identity (`SIGNER_COMMITTER_NAME`,
+`SIGNER_COMMITTER_EMAIL`) that every signed commit must name:
 
 ```bash
 ssh-keygen -t ed25519 -N '' -C git-signer -f /tmp/signing_key
-SIGNER_KEY_PATH=/tmp/signing_key SIGNER_ALLOWLIST='agent-*' go run ./cmd/git-signer-server
+SIGNER_KEY_PATH=/tmp/signing_key \
+  SIGNER_COMMITTER_NAME='Dev Eloper' SIGNER_COMMITTER_EMAIL='dev@example.com' \
+  SIGNER_ALLOWLIST='agent-*' go run ./cmd/git-signer-server
 ```
 
 ```bash
@@ -74,9 +80,15 @@ bucket; the sustained rate is `SIGNER_RATE_PER_MIN` (default 60) with a burst ca
 `SIGNER_RATE_BURST` (default 10). Every signing decision emits one structured `slog`
 JSON audit line carrying the VM, payload SHA-256, status and duration — never the payload.
 
-The API also accepts the committer identity settings `SIGNER_COMMITTER_NAME` and
-`SIGNER_COMMITTER_EMAIL`; they are parsed but not yet enforced (commit validation is a
-later slice).
+`POST /v1/sign` signs commits only. The payload is parsed structurally as a git commit
+object (headers with continuation lines, blank-line separator, message body — never
+regex-matched) and must name exactly the configured committer
+(`SIGNER_COMMITTER_NAME`/`SIGNER_COMMITTER_EMAIL`). Anything else is refused before it
+reaches the signing backend, with a distinct status: malformed payload `400`, oversized
+payload `413`, payload already carrying a `gpgsig` header `422`, and a committer other
+than the pinned identity `409`. The rejection reason is logged as metadata only (a stable
+reason code, the payload SHA-256, its size) — never the payload itself. The author's
+identity is deliberately not checked: GitLab verifies the committer.
 
 ## Running the client
 
@@ -153,6 +165,26 @@ git commit -m "demo: signed commit"   # signed through the remote signer
 git verify-commit HEAD                # verifies with stock ssh-keygen
 ```
 
+## Deploying the signer
+
+On a persistent systemd VM, [`deploy/install-server.sh`](deploy/install-server.sh) installs
+`git-signer-server` as a hardened service under a dedicated `git-signer` account (restart on
+failure, journald logs, graceful SIGTERM shutdown that drains in-flight signatures). It
+requires the committer identity and the VM allowlist:
+
+```bash
+sudo env \
+  GIT_SIGNER_COMMITTER_NAME='Your Name' \
+  GIT_SIGNER_COMMITTER_EMAIL='you@example.com' \
+  GIT_SIGNER_ALLOWLIST='agent-*' \
+  deploy/install-server.sh
+```
+
+It creates `/var/lib/git-signer` (mode `0700`), generates an ED25519 key if none exists, and
+prints the public key to register with GitLab as a **Signing-only** key. See the
+[signing key lifecycle](docs/key-lifecycle.md) runbook for configuration, backup, rotation,
+recovery, and service operations.
+
 ## Status
 
 ✅ **Milestone 1 complete (localhost proof of concept).** The
@@ -160,13 +192,14 @@ git verify-commit HEAD                # verifies with stock ssh-keygen
 the [spec](docs/spec.md) is ready, and the signer server's HTTP API (`POST /v1/sign`,
 `GET /v1/public-key`, `GET /healthz`, `GET /readyz`) is implemented on top of the
 `ssh-keygen` signing backend, with VM-identity authorization (identity header,
-allowlist, per-VM rate limit, audit log) on `POST /v1/sign`. The `git-remote-sign`
-client implements the whole `gpg.ssh.program` contract: signing (payload forwarding,
-pinned-key check, local signature verification, atomic `.sig` write) and verbatim
-verification passthrough (`verify`, `find-principals`, `check-novalidate`) to the
-system `ssh-keygen`. A real-Git end-to-end test commits in a temporary repository
-against a locally running server and asserts `git verify-commit` exit codes (0 valid,
-1 unknown signer, 128 corrupt). Run the whole loop with
+allowlist, per-VM rate limit, audit log) and structural commit validation (pinned
+committer, size limit, no pre-existing `gpgsig`) on `POST /v1/sign`. The
+`git-remote-sign` client implements the whole `gpg.ssh.program` contract: signing
+(payload forwarding, pinned-key check, local signature verification, atomic `.sig`
+write) and verbatim verification passthrough (`verify`, `find-principals`,
+`check-novalidate`) to the system `ssh-keygen`. A real-Git end-to-end test commits in a
+temporary repository against a locally running server and asserts `git verify-commit`
+exit codes (0 valid, 1 unknown signer, 128 corrupt). Run the whole loop with
 [`scripts/demo-local.sh`](scripts/demo-local.sh).
 
 ## License
