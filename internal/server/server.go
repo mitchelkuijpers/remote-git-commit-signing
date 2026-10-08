@@ -110,7 +110,7 @@ func (s *Server) handleSign(w http.ResponseWriter, r *http.Request) {
 	// Reject early when the declared size already exceeds the limit.
 	if r.ContentLength > s.maxPayload {
 		s.logger.Warn("sign request refused",
-			"event", "sign_request", "status", "payload_too_large",
+			"event", "sign_request", "status", "payload_too_large", "reason", reasonPayloadTooLarge,
 			"payload_bytes", r.ContentLength, "duration_ms", elapsed())
 		writeText(w, http.StatusRequestEntityTooLarge, "payload too large")
 		return
@@ -125,7 +125,7 @@ func (s *Server) handleSign(w http.ResponseWriter, r *http.Request) {
 	}
 	if int64(len(payload)) > s.maxPayload {
 		s.logger.Warn("sign request refused",
-			"event", "sign_request", "status", "payload_too_large",
+			"event", "sign_request", "status", "payload_too_large", "reason", reasonPayloadTooLarge,
 			"payload_bytes", len(payload), "duration_ms", elapsed())
 		writeText(w, http.StatusRequestEntityTooLarge, "payload too large")
 		return
@@ -150,7 +150,7 @@ func (s *Server) handleSign(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		if errors.Is(err, signing.ErrPayloadTooLarge) {
 			s.logger.Warn("sign request refused",
-				"event", "sign_request", "status", "payload_too_large",
+				"event", "sign_request", "status", "payload_too_large", "reason", reasonPayloadTooLarge,
 				"payload_bytes", len(payload), "duration_ms", elapsed())
 			writeText(w, http.StatusRequestEntityTooLarge, "payload too large")
 			return

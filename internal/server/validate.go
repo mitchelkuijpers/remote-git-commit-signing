@@ -12,6 +12,7 @@ const (
 	reasonMalformedCommit   = "malformed_commit"
 	reasonPreExistingSig    = "pre_existing_signature"
 	reasonCommitterMismatch = "committer_mismatch"
+	reasonPayloadTooLarge   = "payload_too_large"
 )
 
 // commitCheck is the outcome of validating a signing payload as a commit
