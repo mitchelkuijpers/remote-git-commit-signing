@@ -42,6 +42,8 @@ API, security model, and milestones.
 - [Git SSH signing interface (spike findings)](docs/git-ssh-signing-interface.md) —
   empirically verified `gpg.ssh.program` behavior that the client must implement
   (sign argv, two-step verify protocol, git's exit-code semantics).
+- [Signing key lifecycle](docs/key-lifecycle.md) — server deployment, key generation,
+  GitLab registration (Signing-only), backup, rotation, and recovery.
 
 Additional docs (`architecture`, `exe-dev-setup`, `gitlab-setup`, `security`,
 `troubleshooting`) will be added as implementation proceeds.
@@ -67,6 +69,21 @@ curl -s --data-binary @commit-payload \
 The API also accepts the committer identity settings `SIGNER_COMMITTER_NAME` and
 `SIGNER_COMMITTER_EMAIL`; they are parsed but not yet enforced (commit validation is a
 later slice).
+
+## Deploying the signer
+
+On a persistent systemd VM, [`deploy/install-server.sh`](deploy/install-server.sh) installs
+`git-signer-server` as a hardened service under a dedicated `git-signer` account (restart on
+failure, journald logs, graceful SIGTERM shutdown that drains in-flight signatures):
+
+```bash
+sudo deploy/install-server.sh
+```
+
+It creates `/var/lib/git-signer` (mode `0700`), generates an ED25519 key if none exists, and
+prints the public key to register with GitLab as a **Signing-only** key. See the
+[signing key lifecycle](docs/key-lifecycle.md) runbook for backup, rotation, recovery, and
+service operations.
 
 ## Status
 
