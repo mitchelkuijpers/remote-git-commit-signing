@@ -59,8 +59,8 @@ func New(signer signing.Signer, publicKey string, cfg Config, logger *slog.Logge
 	}
 
 	mux := http.NewServeMux()
+	mux.HandleFunc("GET /{$}", s.handleLandingPage)
 	mux.HandleFunc("POST /v1/sign", s.withAuthorization(s.handleSign))
-	mux.HandleFunc("GET /{$}", s.handleRoot)
 	mux.HandleFunc("GET /v1/public-key", s.handlePublicKey)
 	mux.HandleFunc("GET /healthz", s.handleHealthz)
 	mux.HandleFunc("GET /readyz", s.handleReadyz)
@@ -76,12 +76,6 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // Ready reports whether the signing key is loaded and the server can sign.
 func (s *Server) Ready() bool {
 	return s.publicKey != "" && s.signer != nil
-}
-
-// handleRoot serves the public landing page. Like the probes it exposes no
-// key material or configuration and requires no identity.
-func (s *Server) handleRoot(w http.ResponseWriter, _ *http.Request) {
-	writeText(w, http.StatusOK, "git-signer-server: POST /v1/sign")
 }
 
 func (s *Server) handleHealthz(w http.ResponseWriter, _ *http.Request) {
