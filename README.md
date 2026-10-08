@@ -186,6 +186,59 @@ prints the public key to register with GitLab as a **Signing-only** key. See the
 [signing key lifecycle](docs/key-lifecycle.md) runbook for configuration, backup, rotation,
 recovery, and service operations.
 
+## Provisioning an agent VM
+
+On a fresh agent VM, one command installs the client, pins the public key, writes the git
+config, checks the signer is reachable, and runs a signing self-test:
+
+```bash
+GIT_REMOTE_SIGNER_URL=http://git-signer.int.exe.xyz \
+GIT_REMOTE_SIGNER_PUBLIC_KEY=/var/lib/git-signer/signing_key.pub \
+GIT_SIGNER_COMMITTER_NAME='Your Name' \
+GIT_SIGNER_COMMITTER_EMAIL='you@example.com' \
+  deploy/install-client.sh
+```
+
+[`deploy/install-client.sh`](deploy/install-client.sh) is idempotent and needs only `sh`,
+`git`, `ssh-keygen`, and `curl` — no Nix, Docker, or other runtime. It:
+
+- checks the signer is reachable (`GET /healthz`);
+- cross-checks the pinned key against `GET /v1/public-key` and aborts on mismatch;
+- installs `git-remote-sign` from `GIT_REMOTE_SIGNER_BIN`, or from a checksum-verified
+  release download;
+- installs the pinned key to `$XDG_CONFIG_HOME/git-remote-signer/signing.pub`;
+- sets *only* these user-level git keys: `gpg.format`, `gpg.ssh.program`,
+  `commit.gpgsign`, `user.signingkey`, `user.name`, `user.email`;
+- persists the two client environment variables in
+  `$XDG_CONFIG_HOME/git-remote-signer/env` and sources them from `~/.profile`;
+- runs a self-test commit in a throwaway repository — signed through the real signer,
+  verified locally with the pinned key, removed afterwards, never pushed.
+
+Re-running it leaves the VM in the same state. It writes no private key, token, or signing
+credential: only the binary, the public key, the client environment, and the git
+configuration. Pass `--skip-selftest` to configure without the self-test.
+
+`POST /v1/sign` requires the platform-verified VM identity, so `GIT_REMOTE_SIGNER_URL`
+must be the exe.dev peer-integration URL (or a proxy that stamps the identity). Pointing
+the self-test at the signer directly fails closed, as intended.
+
+### Release downloads
+
+Without `GIT_REMOTE_SIGNER_BIN`, the installer downloads the artifact for the host OS/arch
+and verifies it with `sha256sum -c` before anything is extracted or installed. For tag
+`vX.Y.Z` it expects, under `$GIT_REMOTE_SIGNER_DOWNLOAD_BASE/vX.Y.Z/` (default: this
+repository's GitHub releases):
+
+```text
+git-remote-sign_X.Y.Z_<os>_<arch>.tar.gz   # contains the git-remote-sign binary
+checksums.txt                              # sha256sum format
+```
+
+where `<os>` is `linux` or `darwin` and `<arch>` is `amd64` or `arm64`. A missing checksum
+entry or a mismatch aborts the install; an unverified download is never executed. Until
+the v0.1.0 release is published, install a locally built binary with
+`GIT_REMOTE_SIGNER_BIN=./git-remote-sign`.
+
 ## Status
 
 ✅ **Milestone 1 complete (localhost proof of concept).** The
@@ -202,6 +255,11 @@ signature verification, atomic `.sig` write) and verbatim verification passthrou
 real-Git end-to-end test commits in a temporary repository against a locally running
 server and asserts `git verify-commit` exit codes (0 valid, 1 unknown signer, 128
 corrupt). Run the whole loop with [`scripts/demo-local.sh`](scripts/demo-local.sh).
+
+**Milestone 3 provisioning is in place:** [`deploy/install-client.sh`](deploy/install-client.sh)
+takes a fresh agent VM to signing-capable in one idempotent run (verified binary, pinned
+key, git config, reachability + key cross-check, and a harmless signing self-test), with
+its behaviour covered by the tests in `deploy/install_client_test.go`.
 
 ## License
 
