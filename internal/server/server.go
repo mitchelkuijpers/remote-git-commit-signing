@@ -45,6 +45,7 @@ func New(signer signing.Signer, publicKey string, cfg Config, logger *slog.Logge
 	}
 
 	mux := http.NewServeMux()
+	mux.HandleFunc("GET /{$}", s.handleLandingPage)
 	mux.HandleFunc("POST /v1/sign", s.handleSign)
 	mux.HandleFunc("GET /v1/public-key", s.handlePublicKey)
 	mux.HandleFunc("GET /healthz", s.handleHealthz)
