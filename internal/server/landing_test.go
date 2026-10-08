@@ -161,3 +161,26 @@ func TestLandingPageHasNoJavaScriptOrExternalAssets(t *testing.T) {
 		}
 	}
 }
+
+func TestLandingPageFailsCleanlyOnMalformedKey(t *testing.T) {
+	signer, _ := newSigner(t)
+	ts := newTestHTTPServer(t, signer, "not-a-public-key", server.Config{})
+
+	resp, body := get(t, ts.URL+"/")
+	if resp.StatusCode != http.StatusInternalServerError {
+		t.Fatalf("GET / with malformed key status = %d, want 500: %s", resp.StatusCode, body)
+	}
+	if strings.Contains(body, "not-a-public-key") {
+		t.Fatalf("GET / echoed the malformed key: %s", body)
+	}
+}
+
+func TestUnknownPathIsNotFound(t *testing.T) {
+	signer, publicKey := newSigner(t)
+	ts := newTestHTTPServer(t, signer, publicKey, server.Config{})
+
+	resp, _ := get(t, ts.URL+"/does-not-exist")
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("GET /does-not-exist status = %d, want 404 (landing page must not shadow it)", resp.StatusCode)
+	}
+}
