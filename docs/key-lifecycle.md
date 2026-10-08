@@ -260,3 +260,15 @@ read-only to the service: the key directory is readable but not writable, and
 `ssh-keygen` scratch files live in the per-service private `/tmp`. Only
 `/etc/git-signer/git-signer.env` configures it, and that file never contains key
 material.
+
+## Related documentation
+
+- [Architecture](architecture.md) — components, trust boundaries, request flows, and
+  the complete configuration surface.
+- [GitLab setup](gitlab-setup.md) — registering the key (Signing-only), the verified-email
+  requirement, and the Verified-badge checklist.
+- [Security](security.md) — threat model and the accepted residual risk.
+- [Troubleshooting](troubleshooting.md) — failure classes, verify exit codes, systemd
+  startup failures.
+- [Acceptance checklist](acceptance-checklist.md) — the manual GitLab gate.
+
