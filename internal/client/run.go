@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 )
 
 // Run executes the git-remote-sign program and returns its exit code.
@@ -118,7 +119,14 @@ func fetchSignature(cfg config, payload []byte) ([]byte, error) {
 		return nil, fmt.Errorf("signature response exceeds %d bytes", cfg.maxResponseBytes)
 	}
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("signer returned %s: %s", resp.Status, snippet(body))
+		// The response body is untrusted: the signer may be misconfigured,
+		// compromised, or MITM'd over cleartext HTTP, and it could reflect the
+		// commit payload or embed terminal escapes. Report the status plus a
+		// sanitized summary, never the raw bytes.
+		if summary := responseSummary(body); summary != "" {
+			return nil, fmt.Errorf("signer returned %s: %s", resp.Status, summary)
+		}
+		return nil, fmt.Errorf("signer returned %s", resp.Status)
 	}
 	if len(body) == 0 {
 		return nil, errors.New("signer returned an empty signature")
@@ -162,12 +170,25 @@ func writeSignatureAtomic(path string, sig []byte) error {
 	return nil
 }
 
-// snippet limits a response body to a short, log-safe excerpt.
-func snippet(b []byte) string {
+// responseSummary reduces an untrusted response body to a short, terminal-safe
+// excerpt for an error message. Only the first line is kept, bytes outside
+// printable ASCII are dropped (so control characters and terminal escapes
+// cannot reach the user's terminal), and the result is capped. It returns ""
+// when nothing printable remains.
+func responseSummary(b []byte) string {
 	const max = 200
-	b = bytes.TrimSpace(b)
-	if len(b) > max {
-		return string(b[:max]) + "..."
+	if i := bytes.IndexByte(b, '\n'); i >= 0 {
+		b = b[:i]
 	}
-	return string(b)
+	printable := make([]byte, 0, len(b))
+	for _, c := range b {
+		if c >= 0x20 && c < 0x7f {
+			printable = append(printable, c)
+		}
+	}
+	s := strings.TrimSpace(string(printable))
+	if len(s) > max {
+		return s[:max] + "..."
+	}
+	return s
 }

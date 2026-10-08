@@ -88,7 +88,7 @@ func (s *Server) checkCommit(payload []byte) commitCheck {
 	// The committer identity is pinned: GitLab verifies the committer email,
 	// so anything else must never be signed with this key. The author's
 	// identity is deliberately not checked.
-	if sig.Name != s.committerName || sig.Email != s.committerEmail {
+	if !s.committer.Matches(sig.Name, sig.Email) {
 		return commitCheck{
 			status:  http.StatusConflict,
 			reason:  reasonCommitterMismatch,

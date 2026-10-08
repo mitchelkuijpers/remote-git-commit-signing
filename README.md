@@ -137,9 +137,13 @@ binary. No Nix, Docker, or other runtime. It:
 2. cross-checks the pinned key against `GET /v1/public-key` and aborts on mismatch;
 3. installs `git-remote-sign` from `GIT_REMOTE_SIGNER_BIN`, or from a checksum-verified
    [release download](#release-artifacts);
-4. installs the pinned public key to `$XDG_CONFIG_HOME/git-remote-signer/signing.pub`;
+4. installs the pinned public key to `$XDG_CONFIG_HOME/git-remote-signer/signing.pub`
+   and a matching allowed-signers file to
+   `$XDG_CONFIG_HOME/git-remote-signer/allowed_signers` (so local
+   `git verify-commit` trusts the pinned key with no manual setup);
 5. sets *only* these user-level git keys: `gpg.format`, `gpg.ssh.program`,
-   `commit.gpgsign`, `user.signingkey`, `user.name`, `user.email`;
+   `commit.gpgsign`, `user.signingkey`, `gpg.ssh.allowedSignersFile`, `user.name`,
+   `user.email`;
 6. persists the client environment variables in
    `$XDG_CONFIG_HOME/git-remote-signer/env` and sources them from `~/.profile`;
 7. runs a self-test commit in a throwaway repository — signed through the real signer and
@@ -165,7 +169,14 @@ scripts/demo-local.sh
 
 Everything runs in a temporary directory. The script uses `scripts/devproxy` to stand in
 for exe.dev's authenticated peer proxy, which in production stamps the verified
-`X-Exedev-Source-Vm` identity that `POST /v1/sign` requires. Expected tail:
+`X-Exedev-Source-Vm` identity that `POST /v1/sign` requires.
+
+> **Warning:** `scripts/devproxy` is a **development-only** stand-in for exe.dev
+> platform plumbing. It stamps `X-Exedev-Source-Vm` on every request, so it must
+> **never** be deployed in front of a production signer — that would make the
+> platform-vouched identity forgeable by any client that can reach it.
+
+Expected tail:
 
 ```text
 ==> verifying the commit signature with stock Git

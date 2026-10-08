@@ -8,6 +8,10 @@
 # if none exists yet (delegating to generate-key.sh), and enables + starts the
 # service. Re-running is safe: an existing key is never touched.
 #
+# --no-start and DESTDIR are intentional: they install the same files
+# idempotently without creating users, chowning, or starting the service, so
+# non-root/CI staging and image builds can exercise the installer.
+#
 # Usage: sudo deploy/install-server.sh [--no-start] [--skip-key]
 #
 # Environment:

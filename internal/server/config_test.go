@@ -74,8 +74,8 @@ func TestLoadConfigDefaults(t *testing.T) {
 	if cfg.Port != 8000 {
 		t.Fatalf("Port = %d, want default 8000", cfg.Port)
 	}
-	if cfg.CommitterName != "Dev Eloper" || cfg.CommitterEmail != "dev@example.com" {
-		t.Fatalf("committer identity = %q/%q, want parsed values", cfg.CommitterName, cfg.CommitterEmail)
+	if cfg.Committer.Name != "Dev Eloper" || cfg.Committer.Email != "dev@example.com" {
+		t.Fatalf("committer identity = %q/%q, want parsed values", cfg.Committer.Name, cfg.Committer.Email)
 	}
 }
 
@@ -92,8 +92,8 @@ func TestLoadConfigReadsEnvironment(t *testing.T) {
 	if cfg.KeyPath != "/keys/signing_key" || cfg.Port != 9100 {
 		t.Fatalf("config = %+v, want key path /keys/signing_key and port 9100", cfg)
 	}
-	if cfg.CommitterName != "Dev Eloper" || cfg.CommitterEmail != "dev@example.com" {
-		t.Fatalf("committer identity = %q/%q, want parsed values", cfg.CommitterName, cfg.CommitterEmail)
+	if cfg.Committer.Name != "Dev Eloper" || cfg.Committer.Email != "dev@example.com" {
+		t.Fatalf("committer identity = %q/%q, want parsed values", cfg.Committer.Name, cfg.Committer.Email)
 	}
 }
 

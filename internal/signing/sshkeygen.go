@@ -11,10 +11,11 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/mitchelkuijpers/remote-git-commit-signing/internal/keyutil"
 )
 
 // namespaceGit is the only SSHSIG namespace Git uses for commit signing.
@@ -57,7 +58,6 @@ type SSHKeygenConfig struct {
 // mutable state, so a single value may be used concurrently.
 type SSHKeygenSigner struct {
 	keyPath  string
-	keygen   string
 	maxBytes int64
 	timeout  time.Duration
 	baseTmp  string
@@ -73,7 +73,6 @@ func NewSSHKeygenSigner(cfg SSHKeygenConfig) (*SSHKeygenSigner, error) {
 
 	s := &SSHKeygenSigner{
 		keyPath:  cfg.KeyPath,
-		keygen:   "ssh-keygen",
 		maxBytes: cfg.MaxPayloadBytes,
 		timeout:  cfg.Timeout,
 		baseTmp:  cfg.TempDir,
@@ -95,20 +94,14 @@ func PublicKey(ctx context.Context, keyPath string) (string, error) {
 		return "", errors.New("signing: key path is required")
 	}
 
-	ctx, cancel := context.WithTimeout(ctx, DefaultTimeout)
-	defer cancel()
-
-	var stdout, stderr bytes.Buffer
-	cmd := exec.CommandContext(ctx, "ssh-keygen", "-y", "-f", keyPath)
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-	if err := cmd.Run(); err != nil {
-		if ctxErr := ctx.Err(); ctxErr != nil {
-			return "", fmt.Errorf("signing: ssh-keygen -y: %w", ctxErr)
+	stdout, stderr, err := keyutil.RunKeygen(ctx, DefaultTimeout, "ssh-keygen", []string{"-y", "-f", keyPath}, nil, "")
+	if err != nil {
+		if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+			return "", fmt.Errorf("signing: ssh-keygen -y: %w", err)
 		}
-		return "", fmt.Errorf("signing: ssh-keygen -y: %w: %s", err, bytes.TrimSpace(stderr.Bytes()))
+		return "", fmt.Errorf("signing: ssh-keygen -y: %w: %s", err, bytes.TrimSpace(stderr))
 	}
-	return strings.TrimSpace(stdout.String()), nil
+	return strings.TrimSpace(string(stdout)), nil
 }
 
 // Sign implements Signer. The payload is written to a unique, access-restricted
@@ -131,18 +124,13 @@ func (s *SSHKeygenSigner) Sign(ctx context.Context, payload []byte) ([]byte, err
 		return nil, fmt.Errorf("signing: write payload: %w", err)
 	}
 
-	ctx, cancel := context.WithTimeout(ctx, s.timeout)
-	defer cancel()
-
-	var stderr bytes.Buffer
-	cmd := exec.CommandContext(ctx, s.keygen, "-Y", "sign", "-n", namespaceGit, "-f", s.keyPath, payloadPath)
-	cmd.Dir = dir
-	cmd.Stderr = &stderr
-	if err := cmd.Run(); err != nil {
-		if ctxErr := ctx.Err(); ctxErr != nil {
-			return nil, fmt.Errorf("signing: ssh-keygen: %w", ctxErr)
+	_, stderr, err := keyutil.RunKeygen(ctx, s.timeout, "ssh-keygen",
+		[]string{"-Y", "sign", "-n", namespaceGit, "-f", s.keyPath, payloadPath}, nil, dir)
+	if err != nil {
+		if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+			return nil, fmt.Errorf("signing: ssh-keygen: %w", err)
 		}
-		return nil, fmt.Errorf("signing: ssh-keygen: %w: %s", err, bytes.TrimSpace(stderr.Bytes()))
+		return nil, fmt.Errorf("signing: ssh-keygen: %w: %s", err, bytes.TrimSpace(stderr))
 	}
 
 	sig, err := os.ReadFile(payloadPath + ".sig")

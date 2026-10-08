@@ -138,6 +138,10 @@ fi
 
 echo "generated $KEY_PATH (mode 0600) and $PUB_PATH" >&2
 echo "register the public key with GitLab as a Signing key only; see docs/key-lifecycle.md" >&2
+if [ "$force" -eq 1 ]; then
+	echo "rotation: restart the service so it loads the new key (it caches the public key at startup):" >&2
+	echo "  sudo systemctl restart git-signer.service" >&2
+fi
 
 # Print only the public key.
 cat "$PUB_PATH"

@@ -11,10 +11,12 @@
 #      hard on mismatch
 #   4. installs the git-remote-sign binary: from a local path
 #      (GIT_REMOTE_SIGNER_BIN) or from a checksum-verified release artifact
-#   5. installs the pinned public key to <config>/signing.pub
+#   5. installs the pinned public key to <config>/signing.pub and a matching
+#      allowed-signers file to <config>/allowed_signers (so local
+#      `git verify-commit` trusts the pinned key with no manual setup)
 #   6. writes the user-level git config (ssh format, signer program,
-#      auto-signing, signingkey, developer name/email) and touches no other git
-#      setting
+#      auto-signing, signingkey, allowed-signers file, developer name/email)
+#      and touches no other git setting
 #   7. persists the two client environment variables in <config>/env and
 #      sources them from the login profile
 #   8. runs a harmless signing self-test in a throwaway repository that is
@@ -85,6 +87,7 @@ install_dir=${GIT_REMOTE_SIGNER_INSTALL_DIR:-$home/.local/bin}
 config_dir=${GIT_REMOTE_SIGNER_CONFIG_DIR:-${XDG_CONFIG_HOME:-$home/.config}/git-remote-signer}
 profile=${GIT_REMOTE_SIGNER_PROFILE:-$home/.profile}
 pubkey_path=$config_dir/signing.pub
+allowed_signers_path=$config_dir/allowed_signers
 env_file=$config_dir/env
 
 skip_selftest=0
@@ -105,6 +108,23 @@ EOF
 die() {
 	echo "install-client: error: $*" >&2
 	exit 1
+}
+
+# stage_and_mv SRC DST MODE installs SRC at DST with MODE atomically, staging
+# through a temporary file in DST's directory and renaming it into place so a
+# partially written file is never observable. It is idempotent: when DST already
+# has byte-identical content, it is left untouched.
+stage_and_mv() {
+	sm_src=$1
+	sm_dst=$2
+	sm_mode=$3
+	sm_tmp=$sm_dst.tmp.$$
+	if [ -f "$sm_dst" ] && cmp -s "$sm_src" "$sm_dst"; then
+		return 0
+	fi
+	cp "$sm_src" "$sm_tmp" || die "cannot stage $sm_tmp"
+	chmod "$sm_mode" "$sm_tmp" || die "cannot set mode on $sm_tmp"
+	mv -f "$sm_tmp" "$sm_dst" || die "cannot install $sm_dst"
 }
 
 while [ $# -gt 0 ]; do
@@ -198,9 +218,7 @@ install_binary() {
 			echo "==> git-remote-sign already installed at $target" >&2
 			return 0
 		fi
-		tmp=$target.tmp.$$
-		install -m 0755 "$local_bin" "$tmp" || die "cannot stage $local_bin at $tmp"
-		mv -f "$tmp" "$target" || die "cannot install $target"
+		stage_and_mv "$local_bin" "$target" 0755
 		echo "==> installed git-remote-sign from $local_bin" >&2
 		return 0
 	fi
@@ -251,16 +269,16 @@ download_binary() {
 	tar -xzf "$dl/$artifact" -C "$extract" || die "cannot extract $artifact"
 	src=$(find "$extract" -type f -name "$BIN_NAME" | sed -n '1p')
 	[ -n "$src" ] || die "$artifact does not contain a $BIN_NAME binary."
-	[ -x "$src" ] || chmod 0755 "$src"
-	tmp=$install_dir/$BIN_NAME.tmp.$$
-	install -m 0755 "$src" "$tmp" || die "cannot stage the downloaded binary at $tmp"
-	mv -f "$tmp" "$install_dir/$BIN_NAME" || die "cannot install $install_dir/$BIN_NAME"
+	stage_and_mv "$src" "$install_dir/$BIN_NAME" 0755
 	echo "==> installed git-remote-sign from verified release $release_version" >&2
 }
 
 install_binary
 
-# 5. Install the pinned public key (public material only).
+# 5. Install the pinned public key and the local allowed-signers file (public
+# material only). The allowed-signers file maps the pinned committer email to
+# the pinned key so that local `git verify-commit` trusts signatures without any
+# manual configuration.
 if [ ! -d "$config_dir" ]; then
 	mkdir -p "$config_dir" || die "cannot create $config_dir"
 	chmod 0700 "$config_dir"
@@ -268,11 +286,18 @@ fi
 if [ -f "$pubkey_path" ] && cmp -s "$WORK/pinned.line" "$pubkey_path"; then
 	echo "==> pinned public key already installed at $pubkey_path" >&2
 else
-	pub_tmp=$pubkey_path.tmp.$$
-	cp "$WORK/pinned.line" "$pub_tmp" || die "cannot stage $pub_tmp"
-	chmod 0644 "$pub_tmp"
-	mv -f "$pub_tmp" "$pubkey_path" || die "cannot install $pubkey_path"
+	stage_and_mv "$WORK/pinned.line" "$pubkey_path" 0644
 	echo "==> installed pinned public key at $pubkey_path" >&2
+fi
+
+# The principal is the committer email Git verifies against; the key is the
+# pinned key, reduced to "type blob" (comments are ignored).
+printf '%s %s\n' "$dev_email" "$(cat "$WORK/pinned.id")" >"$WORK/allowed.line"
+if [ -f "$allowed_signers_path" ] && cmp -s "$WORK/allowed.line" "$allowed_signers_path"; then
+	echo "==> allowed-signers file already installed at $allowed_signers_path" >&2
+else
+	stage_and_mv "$WORK/allowed.line" "$allowed_signers_path" 0644
+	echo "==> installed allowed-signers file at $allowed_signers_path" >&2
 fi
 
 # 6. User-level git configuration. Only these keys are set; everything else in
@@ -285,6 +310,7 @@ set_git_config gpg.format ssh
 set_git_config gpg.ssh.program "$install_dir/$BIN_NAME"
 set_git_config commit.gpgsign true
 set_git_config user.signingkey "$pubkey_path"
+set_git_config gpg.ssh.allowedSignersFile "$allowed_signers_path"
 set_git_config user.name "$dev_name"
 set_git_config user.email "$dev_email"
 
@@ -295,7 +321,7 @@ quote() {
 	printf '%s' "$1" | sed "s/'/'\\\\''/g"
 	printf "'"
 }
-env_tmp=$env_file.tmp.$$
+env_src=$WORK/env.content
 {
 	printf '%s\n' "# Managed by deploy/install-client.sh; re-running the installer"
 	printf '%s\n' "# rewrites this file. It configures git-remote-sign (no key material)."
@@ -304,13 +330,8 @@ env_tmp=$env_file.tmp.$$
 	if [ -n "$timeout" ]; then
 		printf 'export GIT_REMOTE_SIGN_TIMEOUT=%s\n' "$(quote "$timeout")"
 	fi
-} >"$env_tmp" || die "cannot write $env_tmp"
-chmod 0644 "$env_tmp"
-if [ -f "$env_file" ] && cmp -s "$env_tmp" "$env_file"; then
-	rm -f "$env_tmp"
-else
-	mv -f "$env_tmp" "$env_file" || die "cannot install $env_file"
-fi
+} >"$env_src" || die "cannot write $env_src"
+stage_and_mv "$env_src" "$env_file" 0644
 
 begin_marker="# >>> git-remote-signer >>>"
 end_marker="# <<< git-remote-signer <<<"
@@ -339,10 +360,7 @@ if [ -f "$profile" ] && cmp -s "$profile_new" "$profile"; then
 else
 	prof_dir=$(dirname -- "$profile")
 	[ -d "$prof_dir" ] || mkdir -p "$prof_dir" || die "cannot create $prof_dir"
-	prof_tmp=$profile.tmp.$$
-	cp "$profile_new" "$prof_tmp" || die "cannot stage $prof_tmp"
-	chmod 0644 "$prof_tmp"
-	mv -f "$prof_tmp" "$profile" || die "cannot install $profile"
+	stage_and_mv "$profile_new" "$profile" 0644
 	echo "==> client environment persisted in $env_file (sourced from $profile)" >&2
 fi
 
@@ -361,8 +379,8 @@ selftest() {
 	git -C "$repo" config commit.gpgsign true
 	git -C "$repo" config gpg.ssh.program "$install_dir/$BIN_NAME"
 	git -C "$repo" config user.signingkey "$pubkey_path"
-	printf '%s %s\n' "$dev_email" "$(cat "$WORK/pinned.id")" >"$st/allowed_signers"
-	git -C "$repo" config gpg.ssh.allowedSignersFile "$st/allowed_signers"
+	# Verification uses the allowed-signers file the installer just wrote to the
+	# global config, exercising the real provisioning end to end.
 	printf 'self-test\n' >"$repo/README.md"
 	git -C "$repo" add README.md
 	if ! GIT_REMOTE_SIGNER_URL="$url" GIT_REMOTE_SIGNER_PUBLIC_KEY="$pubkey_path" \
@@ -389,7 +407,8 @@ echo "" >&2
 echo "client installed:" >&2
 echo "  binary:     $install_dir/$BIN_NAME" >&2
 echo "  pinned key: $pubkey_path" >&2
-echo "  git config: gpg.format=ssh gpg.ssh.program=$install_dir/$BIN_NAME commit.gpgsign=true user.signingkey=$pubkey_path" >&2
+echo "  allowed:    $allowed_signers_path" >&2
+echo "  git config: gpg.format=ssh gpg.ssh.program=$install_dir/$BIN_NAME commit.gpgsign=true user.signingkey=$pubkey_path gpg.ssh.allowedSignersFile=$allowed_signers_path" >&2
 echo "  env:        $env_file (sourced from $profile)" >&2
 if [ "$skip_selftest" -eq 0 ]; then
 	echo "  self-test:  passed" >&2

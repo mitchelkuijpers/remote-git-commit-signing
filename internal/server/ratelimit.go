@@ -6,6 +6,17 @@ import (
 	"time"
 )
 
+// bucketTTL is how long an idle per-identity bucket is retained. Idle buckets
+// are reclaimed lazily from allow so the map cannot grow without bound as
+// allowlisted VM identities churn over the fleet's lifetime. It is far longer
+// than any refill interval, so a bucket is never discarded while it still holds
+// meaningful state — and an idle bucket would have refilled to full anyway.
+const bucketTTL = 30 * time.Minute
+
+// sweepBatch bounds how many buckets are examined for expiry per allow call, so
+// eviction stays amortized O(1) however large the map grows.
+const sweepBatch = 16
+
 // rateLimiter is a per-key token bucket, implemented in-process with the
 // standard library only.
 type rateLimiter struct {
@@ -37,6 +48,8 @@ func (l *rateLimiter) allow(key string, now time.Time) bool {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
+	l.evictIdle(now)
+
 	b, ok := l.buckets[key]
 	if !ok {
 		b = &tokenBucket{tokens: l.burst, last: now}
@@ -51,4 +64,21 @@ func (l *rateLimiter) allow(key string, now time.Time) bool {
 	}
 	b.tokens--
 	return true
+}
+
+// evictIdle drops up to sweepBatch buckets that have been idle longer than
+// bucketTTL. Deleting entries during a range is safe in Go. Scanning a bounded
+// batch per call keeps the cost amortized O(1) while still reclaiming every idle
+// identity over time.
+func (l *rateLimiter) evictIdle(now time.Time) {
+	examined := 0
+	for key, b := range l.buckets {
+		if now.Sub(b.last) > bucketTTL {
+			delete(l.buckets, key)
+		}
+		examined++
+		if examined >= sweepBatch {
+			break
+		}
+	}
 }

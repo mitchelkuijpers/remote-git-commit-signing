@@ -76,10 +76,9 @@ func TestSignRejectsNonAllowlistedIdentity(t *testing.T) {
 func TestSignAllowlistSupportsExactNamesAndPatterns(t *testing.T) {
 	signer, publicKey := newSigner(t)
 	ts := newTestHTTPServer(t, signer, publicKey, server.Config{
-		Allowlist:      server.Allowlist{"exact-vm", "agent-*"},
-		CommitterName:  testCommitterName,
-		CommitterEmail: testCommitterEmail,
-		RateBurst:      1000,
+		Allowlist: server.Allowlist{"exact-vm", "agent-*"},
+		Committer: server.Committer{Name: testCommitterName, Email: testCommitterEmail},
+		RateBurst: 1000,
 	})
 
 	commit := validCommit(testCommitterName, testCommitterEmail, "message\n")
@@ -115,11 +114,10 @@ func TestSignEmptyAllowlistRefusesEveryone(t *testing.T) {
 func TestSignRateLimitIsPerIdentity(t *testing.T) {
 	signer, publicKey := newSigner(t)
 	ts := newTestHTTPServer(t, signer, publicKey, server.Config{
-		Allowlist:      server.Allowlist{"vm-a", "vm-b"},
-		CommitterName:  testCommitterName,
-		CommitterEmail: testCommitterEmail,
-		RatePerMin:     1,
-		RateBurst:      2,
+		Allowlist:  server.Allowlist{"vm-a", "vm-b"},
+		Committer:  server.Committer{Name: testCommitterName, Email: testCommitterEmail},
+		RatePerMin: 1,
+		RateBurst:  2,
 	})
 
 	commit := validCommit(testCommitterName, testCommitterEmail, "message\n")
@@ -172,10 +170,9 @@ func TestAuditLogLinePerSigningDecision(t *testing.T) {
 	var buf bytes.Buffer
 	logger := slog.New(slog.NewJSONHandler(&buf, nil))
 	srv := server.New(signer, publicKey, server.Config{
-		Allowlist:      server.Allowlist{"agent-*"},
-		CommitterName:  testCommitterName,
-		CommitterEmail: testCommitterEmail,
-		RateBurst:      1000,
+		Allowlist: server.Allowlist{"agent-*"},
+		Committer: server.Committer{Name: testCommitterName, Email: testCommitterEmail},
+		RateBurst: 1000,
 	}, logger)
 	ts := httptest.NewServer(srv)
 	t.Cleanup(ts.Close)
@@ -249,10 +246,9 @@ func TestAuditLogLinePerSigningDecision(t *testing.T) {
 func TestSignCountersTrackOutcomes(t *testing.T) {
 	signer, publicKey := newSigner(t)
 	srv := server.New(signer, publicKey, server.Config{
-		Allowlist:      server.Allowlist{"ok-vm"},
-		CommitterName:  testCommitterName,
-		CommitterEmail: testCommitterEmail,
-		RateBurst:      1000,
+		Allowlist: server.Allowlist{"ok-vm"},
+		Committer: server.Committer{Name: testCommitterName, Email: testCommitterEmail},
+		RateBurst: 1000,
 	}, discardLogger())
 	ts := httptest.NewServer(srv)
 	t.Cleanup(ts.Close)
@@ -280,10 +276,9 @@ func TestSignCountersTrackOutcomes(t *testing.T) {
 		t.Fatalf("NewSSHKeygenSigner: %v", err)
 	}
 	brokenSrv := server.New(broken, "ssh-ed25519 AAAA", server.Config{
-		Allowlist:      server.Allowlist{"ok-vm"},
-		CommitterName:  testCommitterName,
-		CommitterEmail: testCommitterEmail,
-		RateBurst:      1000,
+		Allowlist: server.Allowlist{"ok-vm"},
+		Committer: server.Committer{Name: testCommitterName, Email: testCommitterEmail},
+		RateBurst: 1000,
 	}, discardLogger())
 	brokenTS := httptest.NewServer(brokenSrv)
 	t.Cleanup(brokenTS.Close)

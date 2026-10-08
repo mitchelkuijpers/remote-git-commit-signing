@@ -177,13 +177,27 @@ when GitLab *and every client* trust the new key.
 
    Record the new public key and its fingerprint.
 
-2. Register the new public key with GitLab (Signing-only), exactly as above.
-3. Update the pinned `GIT_REMOTE_SIGNER_PUBLIC_KEY` on every agent VM / image,
+2. **Restart the service** so it loads the new key:
+
+   ```sh
+   sudo systemctl restart git-signer.service
+   ```
+
+   The server caches the public key at startup while the signer re-reads the
+   private key on every request. Without a restart, `GET /v1/public-key` and
+   the landing page keep serving the *old* key while signing already uses the
+   *new* one — and `deploy/install-client.sh`'s pinned-key cross-check then
+   hard-fails, because the client pins the new key but the served key is stale.
+   The restart drains in-flight signatures gracefully (see
+   [Operating the service](#operating-the-service)).
+
+3. Register the new public key with GitLab (Signing-only), exactly as above.
+4. Update the pinned `GIT_REMOTE_SIGNER_PUBLIC_KEY` on every agent VM / image,
    and re-provision (the provisioning scripts install the pinned key).
-4. Verify a real signing round-trip end to end: on an agent VM run
+5. Verify a real signing round-trip end to end: on an agent VM run
    `git commit --allow-empty -m "rotation check"` and confirm the commit is
    signed and shows as Verified in GitLab.
-5. Only then remove the *old* key from GitLab, and remove
+6. Only then remove the *old* key from GitLab, and remove
    `signing_key.old` from the VM once you are certain no client still pins it.
 
 During the overlap both keys may be registered; that is expected and is what

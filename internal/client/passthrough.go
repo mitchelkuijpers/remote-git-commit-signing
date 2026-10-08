@@ -34,6 +34,10 @@ func isPassthroughOperation(op string) bool {
 // (not a key), and -I/-s/-Overify-time must reach ssh-keygen exactly as Git
 // passed them. Nothing runs through a shell: the original argument slice is
 // handed to exec, which kills the child if ctx is canceled.
+//
+// This path deliberately does not use internal/keyutil: it forwards Git's argv
+// and the child's exit code verbatim and applies no timeout, so sharing the
+// signer's exec shape would change its semantics rather than remove duplication.
 func runPassthrough(ctx context.Context, argv []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	keygen, err := exec.LookPath("ssh-keygen")
 	if err != nil {

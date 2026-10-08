@@ -25,17 +25,15 @@ type Server struct {
 	publicKey   string
 	maxPayload  int64
 	signTimeout time.Duration
-	// committerName and committerEmail are the pinned identity a commit must
-	// name to be signed.
-	committerName  string
-	committerEmail string
-	logger         *slog.Logger
-	mux            *http.ServeMux
-	allowlist      Allowlist
-	limiter        *rateLimiter
-	signed         atomic.Int64
-	rejected       atomic.Int64
-	failed         atomic.Int64
+	// committer is the pinned identity a commit must name to be signed.
+	committer Committer
+	logger    *slog.Logger
+	mux       http.Handler
+	allowlist Allowlist
+	limiter   *rateLimiter
+	signed    atomic.Int64
+	rejected  atomic.Int64
+	failed    atomic.Int64
 }
 
 // New builds the HTTP handler. publicKey is the derived public signing key; it
@@ -47,15 +45,14 @@ func New(signer signing.Signer, publicKey string, cfg Config, logger *slog.Logge
 	}
 
 	s := &Server{
-		signer:         signer,
-		publicKey:      publicKey,
-		maxPayload:     cfg.MaxPayloadBytes,
-		signTimeout:    cfg.SignTimeout,
-		committerName:  cfg.CommitterName,
-		committerEmail: cfg.CommitterEmail,
-		logger:         logger,
-		allowlist:      cfg.Allowlist,
-		limiter:        newRateLimiter(cfg.RatePerMin, cfg.RateBurst),
+		signer:      signer,
+		publicKey:   publicKey,
+		maxPayload:  cfg.MaxPayloadBytes,
+		signTimeout: cfg.SignTimeout,
+		committer:   cfg.Committer,
+		logger:      logger,
+		allowlist:   cfg.Allowlist,
+		limiter:     newRateLimiter(cfg.RatePerMin, cfg.RateBurst),
 	}
 
 	mux := http.NewServeMux()
@@ -64,7 +61,7 @@ func New(signer signing.Signer, publicKey string, cfg Config, logger *slog.Logge
 	mux.HandleFunc("GET /v1/public-key", s.handlePublicKey)
 	mux.HandleFunc("GET /healthz", s.handleHealthz)
 	mux.HandleFunc("GET /readyz", s.handleReadyz)
-	s.mux = mux
+	s.mux = withRequestID(mux)
 	return s
 }
 

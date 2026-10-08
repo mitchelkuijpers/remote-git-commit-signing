@@ -364,6 +364,50 @@ func TestSignRejectsNonOKStatus(t *testing.T) {
 	expectNoSig(t, bufferFile)
 }
 
+// TestSignSanitizesUntrustedErrorBody covers the cleartext-HTTP threat: a
+// misconfigured or hostile signer could echo the payload or emit terminal
+// escapes in an error body. The client must report the status plus a sanitized
+// summary, never the raw bytes.
+func TestSignSanitizesUntrustedErrorBody(t *testing.T) {
+	keyPath := newTestKey(t)
+	pubLine := publicKeyLine(t, keyPath)
+	// First line carries terminal escapes and control bytes plus a long run, so
+	// the summary is both filtered and capped; the second line must be dropped.
+	hostile := "\x1b[2Jsigner-said\x00\x07no\r" + strings.Repeat("A", 500) + "\nsecond line\n"
+	raw := newRawSignServer(t, http.StatusForbidden, hostile, nil)
+
+	dir := t.TempDir()
+	keyFile := filepath.Join(dir, "signing.pub")
+	writeFile(t, keyFile, pubLine+"\n")
+	bufferFile := filepath.Join(dir, "buffer")
+	writeFile(t, bufferFile, "payload\n")
+
+	var stderr bytes.Buffer
+	code := runClient(signArgv(keyFile, bufferFile), env(map[string]string{
+		"GIT_REMOTE_SIGNER_URL":        raw.URL,
+		"GIT_REMOTE_SIGNER_PUBLIC_KEY": pubLine,
+	}), &stderr)
+	if code == 0 {
+		t.Fatal("Run exit = 0, want non-zero for non-OK status")
+	}
+	out := stderr.String()
+	if !strings.Contains(out, "403 Forbidden") {
+		t.Fatalf("stderr = %q, want the HTTP status", out)
+	}
+	if !strings.Contains(out, "signer-said") {
+		t.Fatalf("stderr = %q, want the sanitized first-line summary", out)
+	}
+	for _, banned := range []string{"\x1b", "\x00", "\x07", "\r", "second line"} {
+		if strings.Contains(out, banned) {
+			t.Fatalf("stderr echoed untrusted bytes %q: %q", banned, out)
+		}
+	}
+	if strings.Contains(out, strings.Repeat("A", 201)) {
+		t.Fatalf("stderr summary is not length-capped: %q", out)
+	}
+	expectNoSig(t, bufferFile)
+}
+
 func TestUnknownOperationsFailLoudly(t *testing.T) {
 	// Signing and the three verify operations are the only supported -Y
 	// operations. Anything else must fail loudly rather than be mishandled.

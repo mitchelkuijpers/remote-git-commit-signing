@@ -42,16 +42,7 @@ func newTestKey(t *testing.T) string {
 // with the matching derived public key.
 func newSigner(t *testing.T) (signing.Signer, string) {
 	t.Helper()
-	keyPath := newTestKey(t)
-	signer, err := signing.NewSSHKeygenSigner(signing.SSHKeygenConfig{KeyPath: keyPath})
-	if err != nil {
-		t.Fatalf("NewSSHKeygenSigner: %v", err)
-	}
-	publicKey, err := signing.PublicKey(context.Background(), keyPath)
-	if err != nil {
-		t.Fatalf("PublicKey: %v", err)
-	}
-	return signer, publicKey
+	return newSignerForKey(t, newTestKey(t))
 }
 
 func newTestHTTPServer(t *testing.T, signer signing.Signer, publicKey string, cfg server.Config) *httptest.Server {
@@ -193,11 +184,10 @@ const testVM = "test-vm"
 // needs, so only the dedicated rate-limit test observes throttling.
 func signConfig() server.Config {
 	return server.Config{
-		Allowlist:      server.Allowlist{testVM},
-		CommitterName:  testCommitterName,
-		CommitterEmail: testCommitterEmail,
-		RatePerMin:     server.DefaultRatePerMin,
-		RateBurst:      1000,
+		Allowlist:  server.Allowlist{testVM},
+		Committer:  server.Committer{Name: testCommitterName, Email: testCommitterEmail},
+		RatePerMin: server.DefaultRatePerMin,
+		RateBurst:  1000,
 	}
 }
 

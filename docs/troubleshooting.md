@@ -21,14 +21,15 @@ Every signing decision — success or rejection — emits exactly one JSON line:
 ```bash
 journalctl -u git-signer.service -f | grep sign_request
 # {"time":"...","level":"INFO","msg":"signing decision","event":"sign_request",
-#  "outcome":"signed","vm":"agent-1","payload_sha256":"...","payload_bytes":217,
-#  "status":200,"duration_ms":12}
+#  "outcome":"signed","vm":"agent-1","request_id":"3f...","payload_sha256":"...",
+#  "payload_bytes":217,"status":200,"duration_ms":12}
 ```
 
 | Field | Meaning |
 | --- | --- |
 | `outcome` | `signed`, `rejected` (4xx), or `failed` (5xx) |
 | `vm` | The platform-verified source VM identity (empty when the identity header was missing) |
+| `request_id` | Per-request identifier, also returned in the `X-Request-Id` response header — correlate a client report with this log line |
 | `payload_sha256` | SHA-256 of the exact payload bytes — correlate with a commit to see who signed it |
 | `payload_bytes` | Payload size |
 | `status` | HTTP status returned to the client |
@@ -63,7 +64,12 @@ pushed.
 | `signer returned 400 Bad Request: malformed commit payload` | Malformed | See below |
 | `signer returned 503 Service Unavailable: signing key not loaded` | Not ready | Restart/reconfigure the server |
 | `signer returned 500 Internal Server Error: signing failed` | Backend failure | Check the audit log's `error` field and journald |
-| `signer returned <status>: <snippet>` (other) | Unexpected | Check the signer logs and the peer proxy |
+| `signer returned <status>: <summary>` (other) | Unexpected | Check the signer logs and the peer proxy |
+
+The client never echoes a raw response body: it prints the HTTP status plus a
+sanitized summary (first line, printable ASCII only, length-capped), so a
+misconfigured or hostile signer cannot inject terminal escapes or dump bytes into
+your terminal. A body with nothing printable is reported by status alone.
 
 ### Signer unreachable (git commit exit 128)
 
@@ -238,7 +244,7 @@ client's verbatim passthrough.
 | Exit | Meaning | What to check |
 | --- | --- | --- |
 | `0` | Valid signature by a key in the allowed-signers file | — |
-| `1` | Signature valid for some key, but no principal matched — the signer's key is not in `gpg.ssh.allowedSignersFile` | Add the signing key (with the committer email as principal) to that file |
+| `1` | Signature valid for some key, but no principal matched — the signer's key is not in `gpg.ssh.allowedSignersFile` | Re-run `deploy/install-client.sh`, which writes `<config>/allowed_signers` mapping the committer email to the pinned key; only hand-edit that file if the key was pinned by hand |
 | `128` | Corrupt or unverifiable signature | The commit embeds a bad signature — inspect `git log --show-signature`; this should be impossible through this client, which validates before writing |
 
 - `git log --show-signature` is **exit-code lenient**: it prints
@@ -246,7 +252,8 @@ client's verbatim passthrough.
   `git verify-commit` in tests and CI, not on `--show-signature`.
 - Missing configuration reports
   `gpg.ssh.allowedSignersFile needs to be configured and exist for ssh signature verification`
-  and shows `No signature`.
+  and shows `No signature`. `deploy/install-client.sh` provisions this file
+  (`<config>/allowed_signers`); re-run it rather than configuring the path by hand.
 - The passthrough preserves `ssh-keygen`'s exit code exactly; a failure to start
   `ssh-keygen` at all returns `1`.
 - Git's verify protocol is two calls (`find-principals`, then `verify`), with

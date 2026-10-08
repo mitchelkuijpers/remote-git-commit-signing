@@ -65,7 +65,9 @@ workstation or GitLab account, and attacks on Git's own signing/verification cod
 If the signer is exposed on a route that does not authenticate the caller — a raw
 public port, a tunnel, a proxy that forwards the header verbatim — the app's identity
 check becomes forgeable header trust. The supported deployments are (a) the exe.dev
-peer URL, and (b) loopback for local development.
+peer URL, and (b) loopback for local development. `scripts/devproxy`, used by the local
+demo, is precisely such a header-forwarding stand-in: it is **development-only** and
+must never be deployed in front of a production signer.
 
 ## Accepted residual risk
 
@@ -101,7 +103,10 @@ pinned. Do not treat the author field as trustworthy either.
   client validates *before* writing, so garbage can never become a commit.
 - **Key rotation drift**: the installer cross-checks the pinned key against
   `GET /v1/public-key` and refuses to configure a client with a key the signer does not
-  hold.
+  hold. Note the server derives its served public key once at startup (a deliberate
+  fail-fast choice), so a rotation is only complete after `systemctl restart
+  git-signer.service`; until then the served key is stale and the cross-check fails by
+  design. See [key-lifecycle.md](key-lifecycle.md#rotation).
 
 ## No unauthenticated fallback
 
