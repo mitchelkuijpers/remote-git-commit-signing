@@ -1,5 +1,12 @@
 // Command devproxy is a local-demo helper, not a product binary.
 //
+// DEVELOPMENT ONLY. This shim is a stand-in for exe.dev platform plumbing: it
+// stamps X-Exedev-Source-Vm on every request so the local demo and loopback
+// deployments can exercise the signer's authorization chain. It MUST NEVER be
+// deployed in front of a production signer. Doing so would make the
+// platform-vouched identity forgeable by any client that can reach the proxy,
+// defeating exactly the trust boundary the signer's authorization depends on.
+//
 // In production, exe.dev's authenticated peer proxy presents the verified
 // source-VM identity to git-signer-server as the X-Exedev-Source-Vm header; a
 // client cannot set it itself. This shim plays that part for the Milestone 1

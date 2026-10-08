@@ -557,6 +557,7 @@ Each signing request should log:
 {
   "event": "commit_signed",
   "vm": "agent-123",
+  "request_id": "3f9c…",
   "status": "success",
   "duration_ms": 12
 }
