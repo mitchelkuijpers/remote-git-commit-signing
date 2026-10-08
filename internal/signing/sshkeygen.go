@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -84,6 +85,30 @@ func NewSSHKeygenSigner(cfg SSHKeygenConfig) (*SSHKeygenSigner, error) {
 		s.timeout = DefaultTimeout
 	}
 	return s, nil
+}
+
+// PublicKey returns the OpenSSH authorized_keys line for the private key at
+// keyPath (for example "ssh-ed25519 AAAA...") by running ssh-keygen -y. It
+// never writes or logs the private key material.
+func PublicKey(ctx context.Context, keyPath string) (string, error) {
+	if keyPath == "" {
+		return "", errors.New("signing: key path is required")
+	}
+
+	ctx, cancel := context.WithTimeout(ctx, DefaultTimeout)
+	defer cancel()
+
+	var stdout, stderr bytes.Buffer
+	cmd := exec.CommandContext(ctx, "ssh-keygen", "-y", "-f", keyPath)
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return "", fmt.Errorf("signing: ssh-keygen -y: %w", ctxErr)
+		}
+		return "", fmt.Errorf("signing: ssh-keygen -y: %w: %s", err, bytes.TrimSpace(stderr.Bytes()))
+	}
+	return strings.TrimSpace(stdout.String()), nil
 }
 
 // Sign implements Signer. The payload is written to a unique, access-restricted
