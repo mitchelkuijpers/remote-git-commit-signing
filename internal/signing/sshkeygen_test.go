@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -205,4 +206,40 @@ func firstLine(b []byte) string {
 		return string(b[:i])
 	}
 	return string(b)
+}
+
+func TestPublicKeyDerivesFromPrivateKey(t *testing.T) {
+	keyPath := newTestKey(t)
+
+	got, err := signing.PublicKey(context.Background(), keyPath)
+	if err != nil {
+		t.Fatalf("PublicKey: %v", err)
+	}
+
+	// Independent source of truth: the .pub file ssh-keygen wrote when it
+	// generated the keypair.
+	pub, err := os.ReadFile(keyPath + ".pub")
+	if err != nil {
+		t.Fatalf("read generated public key: %v", err)
+	}
+	fields := strings.Fields(string(pub))
+	if len(fields) < 2 {
+		t.Fatalf("unexpected generated public key: %q", pub)
+	}
+	gotFields := strings.Fields(got)
+	if len(gotFields) < 2 {
+		t.Fatalf("unexpected derived public key: %q", got)
+	}
+	if gotFields[0] != fields[0] || gotFields[1] != fields[1] {
+		t.Fatalf("PublicKey = %q, want key type/blob %q", got, fields[0]+" "+fields[1])
+	}
+}
+
+func TestPublicKeyMissingKeyErrors(t *testing.T) {
+	if _, err := signing.PublicKey(context.Background(), filepath.Join(t.TempDir(), "missing")); err == nil {
+		t.Fatal("PublicKey(missing key) = nil error, want error")
+	}
+	if _, err := signing.PublicKey(context.Background(), ""); err == nil {
+		t.Fatal("PublicKey(empty path) = nil error, want error")
+	}
 }
