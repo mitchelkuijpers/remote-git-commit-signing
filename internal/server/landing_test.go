@@ -97,10 +97,9 @@ func TestLandingPageRendersNoConfigValues(t *testing.T) {
 	signer, publicKey := newSignerForKey(t, keyPath)
 	const port = 49152
 	ts := newTestHTTPServer(t, signer, publicKey, server.Config{
-		KeyPath:        keyPath,
-		Port:           port,
-		CommitterName:  "Secret Committer",
-		CommitterEmail: "secret-committer@example.com",
+		KeyPath:   keyPath,
+		Port:      port,
+		Committer: server.Committer{Name: "Secret Committer", Email: "secret-committer@example.com"},
 	})
 
 	_, body := get(t, ts.URL+"/")

@@ -34,6 +34,18 @@ const (
 	envRateBurst      = "SIGNER_RATE_BURST"
 )
 
+// Committer is the pinned Git committer identity a commit must name to be
+// signed. Both fields are required with no default.
+type Committer struct {
+	Name  string
+	Email string
+}
+
+// Matches reports whether name and email identify exactly this committer.
+func (c Committer) Matches(name, email string) bool {
+	return c.Name == name && c.Email == email
+}
+
 // Config is the server configuration, sourced from the environment.
 type Config struct {
 	// KeyPath is the path to the private signing key. Required: an empty value
@@ -47,11 +59,10 @@ type Config struct {
 	// SignTimeout bounds a single signing request. Defaults to
 	// signing.DefaultTimeout.
 	SignTimeout time.Duration
-	// CommitterName and CommitterEmail are the pinned committer identity.
-	// Both are required with no default: POST /v1/sign only signs commit
-	// objects naming exactly this identity.
-	CommitterName  string
-	CommitterEmail string
+	// Committer is the pinned committer identity. Both fields are required
+	// with no default: POST /v1/sign only signs commit objects naming exactly
+	// this identity.
+	Committer Committer
 	// Allowlist is the set of VM identities permitted to sign, given as exact
 	// names or path.Match glob patterns. There is no allow-all default: when
 	// SIGNER_ALLOWLIST is unset the list is empty and every request is refused.
@@ -68,12 +79,14 @@ type Config struct {
 // returns an error for a missing key path or an unparsable port.
 func LoadConfig(getenv func(string) string) (Config, error) {
 	cfg := Config{
-		KeyPath:        getenv(envKeyPath),
-		Port:           DefaultPort,
-		CommitterName:  getenv(envCommitterName),
-		CommitterEmail: getenv(envCommitterEmail),
-		RatePerMin:     DefaultRatePerMin,
-		RateBurst:      DefaultRateBurst,
+		KeyPath: getenv(envKeyPath),
+		Port:    DefaultPort,
+		Committer: Committer{
+			Name:  getenv(envCommitterName),
+			Email: getenv(envCommitterEmail),
+		},
+		RatePerMin: DefaultRatePerMin,
+		RateBurst:  DefaultRateBurst,
 	}
 
 	if cfg.KeyPath == "" {
@@ -83,10 +96,10 @@ func LoadConfig(getenv func(string) string) (Config, error) {
 	// The pinned committer identity is required with no default: the signer
 	// refuses to sign a commit that names anything else, so a deployment
 	// without it could never sign anything.
-	if cfg.CommitterName == "" {
+	if cfg.Committer.Name == "" {
 		return Config{}, fmt.Errorf("%s is required", envCommitterName)
 	}
-	if cfg.CommitterEmail == "" {
+	if cfg.Committer.Email == "" {
 		return Config{}, fmt.Errorf("%s is required", envCommitterEmail)
 	}
 

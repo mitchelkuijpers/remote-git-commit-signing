@@ -93,12 +93,11 @@ func startServer(t *testing.T) *e2eServer {
 	}
 
 	cfg := server.Config{
-		KeyPath:        keyPath,
-		CommitterName:  e2eName,
-		CommitterEmail: e2eEmail,
-		Allowlist:      server.Allowlist{e2eVMIdentity},
-		RatePerMin:     6000,
-		RateBurst:      1000,
+		KeyPath:    keyPath,
+		Committer:  server.Committer{Name: e2eName, Email: e2eEmail},
+		Allowlist:  server.Allowlist{e2eVMIdentity},
+		RatePerMin: 6000,
+		RateBurst:  1000,
 	}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	srv := server.New(signer, pubLine, cfg, logger)

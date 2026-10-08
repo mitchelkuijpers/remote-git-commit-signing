@@ -44,6 +44,7 @@ func (a Allowlist) Matches(vm string) bool {
 // the authorization middleware, which emits exactly one audit line.
 type decision struct {
 	vm            string
+	requestID     string
 	payloadSHA256 string
 	payloadBytes  int
 	// reason is a stable rejection-reason code (never payload bytes) set by
@@ -69,7 +70,10 @@ func decisionFrom(ctx context.Context) *decision {
 func (s *Server) withAuthorization(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
-		d := &decision{vm: strings.TrimSpace(r.Header.Get(headerSourceVM))}
+		d := &decision{
+			vm:        strings.TrimSpace(r.Header.Get(headerSourceVM)),
+			requestID: requestIDFrom(r.Context()),
+		}
 		r = r.WithContext(context.WithValue(r.Context(), decisionKey{}, d))
 
 		sw := &statusWriter{ResponseWriter: w}
@@ -148,6 +152,7 @@ func (s *Server) recordDecision(d *decision, status int, elapsed time.Duration) 
 		"event", "sign_request",
 		"outcome", outcome,
 		"vm", d.vm,
+		"request_id", d.requestID,
 		"payload_sha256", d.payloadSHA256,
 		"payload_bytes", d.payloadBytes,
 		"status", status,
