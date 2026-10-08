@@ -1,9 +1,12 @@
 # Spec: Remote Git Commit Signing for exe.dev Agents
 
-> **Status:** Ready for implementation. Seams confirmed; exe.dev peer integration treated
-> as transparent plumbing (not under test). Published to the issue tracker as
+> **Status:** Implemented (v0.1.0). Seams confirmed and covered by tests; the exe.dev
+> peer integration is treated as transparent plumbing (not under test). Published to the
+> issue tracker as
 > [issue #1](https://github.com/mitchelkuijpers/remote-git-commit-signing/issues/1)
-> (`ready-for-agent`) — this file is canonical.
+> — this file is canonical. What is built is described in
+> [architecture.md](architecture.md); the remaining gate is the
+> [manual GitLab acceptance checklist](acceptance-checklist.md).
 > Companion documents: [implementation plan](implementation-plan.md),
 > [Git SSH signing interface — spike findings](git-ssh-signing-interface.md).
 
@@ -166,7 +169,7 @@ unsigned fallbacks.
 seam that can realistically fake reality — HTTP semantics at the API boundary, real Git
 behavior at the OS boundary — never on internal call graphs.
 
-**Proposed seams (3 total — confirm these match expectations):**
+**Confirmed seams (3 total):**
 
 1. **HTTP API seam** — server tested as a black box over real HTTP using a test key:
    request validation, authz policies, payload validation, status codes, size limits,
