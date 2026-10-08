@@ -46,11 +46,35 @@ API, security model, and milestones.
 Additional docs (`architecture`, `exe-dev-setup`, `gitlab-setup`, `security`,
 `troubleshooting`) will be added as implementation proceeds.
 
+## Running the signer locally
+
+`git-signer-server` listens on port `8000` (override with `SIGNER_PORT`) and needs one
+required setting, the path to the private signing key (`SIGNER_KEY_PATH`, no default):
+
+```bash
+ssh-keygen -t ed25519 -N '' -C git-signer -f /tmp/signing_key
+SIGNER_KEY_PATH=/tmp/signing_key go run ./cmd/git-signer-server
+```
+
+```bash
+curl -s http://127.0.0.1:8000/healthz                  # liveness
+curl -s http://127.0.0.1:8000/readyz                   # readiness (503 until the key loads)
+curl -s http://127.0.0.1:8000/v1/public-key            # public signing key
+curl -s --data-binary @commit-payload \
+  http://127.0.0.1:8000/v1/sign                        # raw SSHSIG PEM
+```
+
+The API also accepts the committer identity settings `SIGNER_COMMITTER_NAME` and
+`SIGNER_COMMITTER_EMAIL`; they are parsed but not yet enforced (commit validation is a
+later slice).
+
 ## Status
 
-🚧 **Spec complete, no code yet.** The [spike](docs/git-ssh-signing-interface.md)
-verified Git's `gpg.ssh.program` contract and the [spec](docs/spec.md) is ready.
-Next: confirm the test seams, then start Milestone 1 test-first.
+🚧 **Milestone 1 in progress.** The [spike](docs/git-ssh-signing-interface.md) verified
+Git's `gpg.ssh.program` contract, the [spec](docs/spec.md) is ready, and the signer server's
+minimal HTTP API (`POST /v1/sign`, `GET /v1/public-key`, `GET /healthz`, `GET /readyz`)
+is implemented on top of the `ssh-keygen` signing backend. Next: the `git-remote-sign`
+client and the end-to-end `git commit` flow.
 
 ## License
 
