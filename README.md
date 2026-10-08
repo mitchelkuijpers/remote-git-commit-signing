@@ -42,6 +42,8 @@ API, security model, and milestones.
 - [Git SSH signing interface (spike findings)](docs/git-ssh-signing-interface.md) —
   empirically verified `gpg.ssh.program` behavior that the client must implement
   (sign argv, two-step verify protocol, git's exit-code semantics).
+- [Signing key lifecycle](docs/key-lifecycle.md) — server deployment, key generation,
+  GitLab registration (Signing-only), backup, rotation, and recovery.
 
 Additional docs (`architecture`, `exe-dev-setup`, `gitlab-setup`, `security`,
 `troubleshooting`) will be added as implementation proceeds.
@@ -96,6 +98,26 @@ verified locally against the pinned key before `<buffer>.sig` is written. Any fa
 exits non-zero and removes a partial `.sig`, so Git aborts the commit. Verification
 operations (`verify`, `find-principals`, `check-novalidate`) are delegated to the real
 `ssh-keygen` in a later slice and currently fail loudly with `not implemented yet`.
+
+## Deploying the signer
+
+On a persistent systemd VM, [`deploy/install-server.sh`](deploy/install-server.sh) installs
+`git-signer-server` as a hardened service under a dedicated `git-signer` account (restart on
+failure, journald logs, graceful SIGTERM shutdown that drains in-flight signatures). It
+requires the committer identity and the VM allowlist:
+
+```bash
+sudo env \
+  GIT_SIGNER_COMMITTER_NAME='Your Name' \
+  GIT_SIGNER_COMMITTER_EMAIL='you@example.com' \
+  GIT_SIGNER_ALLOWLIST='agent-*' \
+  deploy/install-server.sh
+```
+
+It creates `/var/lib/git-signer` (mode `0700`), generates an ED25519 key if none exists, and
+prints the public key to register with GitLab as a **Signing-only** key. See the
+[signing key lifecycle](docs/key-lifecycle.md) runbook for configuration, backup, rotation,
+recovery, and service operations.
 
 ## Status
 
