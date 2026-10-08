@@ -53,16 +53,26 @@ required setting, the path to the private signing key (`SIGNER_KEY_PATH`, no def
 
 ```bash
 ssh-keygen -t ed25519 -N '' -C git-signer -f /tmp/signing_key
-SIGNER_KEY_PATH=/tmp/signing_key go run ./cmd/git-signer-server
+SIGNER_KEY_PATH=/tmp/signing_key SIGNER_ALLOWLIST='agent-*' go run ./cmd/git-signer-server
 ```
 
 ```bash
 curl -s http://127.0.0.1:8000/healthz                  # liveness
 curl -s http://127.0.0.1:8000/readyz                   # readiness (503 until the key loads)
 curl -s http://127.0.0.1:8000/v1/public-key            # public signing key
-curl -s --data-binary @commit-payload \
+curl -s -H 'X-Exedev-Source-Vm: agent-1' --data-binary @commit-payload \
   http://127.0.0.1:8000/v1/sign                        # raw SSHSIG PEM
 ```
+
+`POST /v1/sign` requires the platform-verified source-VM identity
+(`X-Exedev-Source-Vm`, set by the exe.dev peer proxy in production) and authorizes it
+against `SIGNER_ALLOWLIST`, a comma-separated list of exact VM names and `path.Match`
+glob patterns (for example `agent-*,ci-runner`). There is no allow-all default: an unset
+or empty allowlist refuses every request (401 when the identity is missing, 403 when it
+is not allowlisted). Per-VM rate limiting returns 429 once a VM exhausts its token
+bucket; the sustained rate is `SIGNER_RATE_PER_MIN` (default 60) with a burst capacity of
+`SIGNER_RATE_BURST` (default 10). Every signing decision emits one structured `slog`
+JSON audit line carrying the VM, payload SHA-256, status and duration — never the payload.
 
 The API also accepts the committer identity settings `SIGNER_COMMITTER_NAME` and
 `SIGNER_COMMITTER_EMAIL`; they are parsed but not yet enforced (commit validation is a
@@ -73,8 +83,9 @@ later slice).
 🚧 **Milestone 1 in progress.** The [spike](docs/git-ssh-signing-interface.md) verified
 Git's `gpg.ssh.program` contract, the [spec](docs/spec.md) is ready, and the signer server's
 minimal HTTP API (`POST /v1/sign`, `GET /v1/public-key`, `GET /healthz`, `GET /readyz`)
-is implemented on top of the `ssh-keygen` signing backend. Next: the `git-remote-sign`
-client and the end-to-end `git commit` flow.
+is implemented on top of the `ssh-keygen` signing backend, with VM-identity authorization
+(identity header, allowlist, per-VM rate limit, audit log) on `POST /v1/sign`. Next: the
+`git-remote-sign` client and the end-to-end `git commit` flow.
 
 ## License
 

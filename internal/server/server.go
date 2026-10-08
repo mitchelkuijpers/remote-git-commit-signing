@@ -10,6 +10,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"sync/atomic"
 	"time"
 
 	"github.com/mitchelkuijpers/remote-git-commit-signing/internal/signing"
@@ -26,6 +27,11 @@ type Server struct {
 	signTimeout time.Duration
 	logger      *slog.Logger
 	mux         *http.ServeMux
+	allowlist   Allowlist
+	limiter     *rateLimiter
+	signed      atomic.Int64
+	rejected    atomic.Int64
+	failed      atomic.Int64
 }
 
 // New builds the HTTP handler. publicKey is the derived public signing key; it
@@ -42,10 +48,13 @@ func New(signer signing.Signer, publicKey string, cfg Config, logger *slog.Logge
 		maxPayload:  cfg.MaxPayloadBytes,
 		signTimeout: cfg.SignTimeout,
 		logger:      logger,
+		allowlist:   cfg.Allowlist,
+		limiter:     newRateLimiter(cfg.RatePerMin, cfg.RateBurst),
 	}
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("POST /v1/sign", s.handleSign)
+	mux.HandleFunc("POST /v1/sign", s.withAuthorization(s.handleSign))
+	mux.HandleFunc("GET /{$}", s.handleRoot)
 	mux.HandleFunc("GET /v1/public-key", s.handlePublicKey)
 	mux.HandleFunc("GET /healthz", s.handleHealthz)
 	mux.HandleFunc("GET /readyz", s.handleReadyz)
@@ -61,6 +70,12 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // Ready reports whether the signing key is loaded and the server can sign.
 func (s *Server) Ready() bool {
 	return s.publicKey != "" && s.signer != nil
+}
+
+// handleRoot serves the public landing page. Like the probes it exposes no
+// key material or configuration and requires no identity.
+func (s *Server) handleRoot(w http.ResponseWriter, _ *http.Request) {
+	writeText(w, http.StatusOK, "git-signer-server: POST /v1/sign")
 }
 
 func (s *Server) handleHealthz(w http.ResponseWriter, _ *http.Request) {
@@ -89,40 +104,36 @@ func (s *Server) handlePublicKey(w http.ResponseWriter, _ *http.Request) {
 }
 
 // handleSign signs the request body. The body is an opaque octet-stream: this
-// slice signs whatever it is given, and commit validation lands later.
+// slice signs whatever it is given, and commit validation lands later. The
+// authorization middleware has already enforced identity, allowlist and rate
+// limit, and owns the single audit log line for this decision.
 func (s *Server) handleSign(w http.ResponseWriter, r *http.Request) {
-	start := time.Now()
-	elapsed := func() int64 { return time.Since(start).Milliseconds() }
-
 	if !s.Ready() {
-		s.logger.Warn("sign request refused",
-			"event", "sign_request", "status", "not_ready", "duration_ms", elapsed())
 		writeText(w, http.StatusServiceUnavailable, "signing key not loaded")
 		return
 	}
 
 	// Reject early when the declared size already exceeds the limit.
 	if r.ContentLength > s.maxPayload {
-		s.logger.Warn("sign request refused",
-			"event", "sign_request", "status", "payload_too_large",
-			"payload_bytes", r.ContentLength, "duration_ms", elapsed())
 		writeText(w, http.StatusRequestEntityTooLarge, "payload too large")
 		return
 	}
 
 	payload, err := io.ReadAll(io.LimitReader(r.Body, s.maxPayload+1))
 	if err != nil {
-		s.logger.Warn("sign request refused",
-			"event", "sign_request", "status", "unreadable_body", "duration_ms", elapsed())
 		writeText(w, http.StatusBadRequest, "could not read request body")
 		return
 	}
 	if int64(len(payload)) > s.maxPayload {
-		s.logger.Warn("sign request refused",
-			"event", "sign_request", "status", "payload_too_large",
-			"payload_bytes", len(payload), "duration_ms", elapsed())
 		writeText(w, http.StatusRequestEntityTooLarge, "payload too large")
 		return
+	}
+
+	// Publish the payload hash for the audit line. The payload itself never
+	// leaves this process, and only its hash is logged.
+	if d := decisionFrom(r.Context()); d != nil {
+		d.payloadSHA256 = payloadHash(payload)
+		d.payloadBytes = len(payload)
 	}
 
 	// Per-request signing deadline, on top of the server's own timeouts.
@@ -132,23 +143,15 @@ func (s *Server) handleSign(w http.ResponseWriter, r *http.Request) {
 	sig, err := s.signer.Sign(ctx, payload)
 	if err != nil {
 		if errors.Is(err, signing.ErrPayloadTooLarge) {
-			s.logger.Warn("sign request refused",
-				"event", "sign_request", "status", "payload_too_large",
-				"payload_bytes", len(payload), "duration_ms", elapsed())
 			writeText(w, http.StatusRequestEntityTooLarge, "payload too large")
 			return
 		}
-		s.logger.Error("sign request failed",
-			"event", "sign_request", "status", "signing_failed",
-			"error", err.Error(), "duration_ms", elapsed())
+		if d := decisionFrom(r.Context()); d != nil {
+			d.err = err
+		}
 		writeText(w, http.StatusInternalServerError, "signing failed")
 		return
 	}
-
-	s.logger.Info("sign request succeeded",
-		"event", "sign_request", "status", "success",
-		"payload_sha256", payloadHash(payload), "payload_bytes", len(payload),
-		"duration_ms", elapsed())
 
 	w.Header().Set("Content-Type", contentTypeSSHSig)
 	w.Header().Set("X-Content-Type-Options", "nosniff")
