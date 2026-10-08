@@ -142,9 +142,9 @@ func TestPublicKeyNotServedWithoutKey(t *testing.T) {
 
 func TestSignRoundTrip(t *testing.T) {
 	signer, publicKey := newSigner(t)
-	ts := newTestHTTPServer(t, signer, publicKey, server.Config{})
+	ts := newTestHTTPServer(t, signer, publicKey, commitConfig())
 
-	payload := []byte("tree 4b825dc642cb6eb9a060e54bf8d69288fbee4904\nauthor Test <test@example.com> 1700000000 +0000\ncommitter Test <test@example.com> 1700000000 +0000\n\nsubject line\n")
+	payload := validCommit(testCommitterName, testCommitterEmail, "subject line\n")
 
 	resp, sig := postSign(t, ts.URL, payload)
 	if resp.StatusCode != http.StatusOK {
@@ -196,9 +196,12 @@ func postSign(t *testing.T, baseURL string, payload []byte) (*http.Response, str
 
 func TestSignRejectsOversizedBody(t *testing.T) {
 	signer, publicKey := newSigner(t)
-	ts := newTestHTTPServer(t, signer, publicKey, server.Config{MaxPayloadBytes: 64})
+	commit := validCommit(testCommitterName, testCommitterEmail, "subject line\n")
+	cfg := commitConfig()
+	cfg.MaxPayloadBytes = int64(len(commit))
+	ts := newTestHTTPServer(t, signer, publicKey, cfg)
 
-	resp, body := postSign(t, ts.URL, bytes.Repeat([]byte("A"), 65))
+	resp, body := postSign(t, ts.URL, bytes.Repeat([]byte("A"), len(commit)+1))
 	if resp.StatusCode != http.StatusRequestEntityTooLarge {
 		t.Fatalf("POST oversized status = %d, want 413: %s", resp.StatusCode, body)
 	}
@@ -206,8 +209,8 @@ func TestSignRejectsOversizedBody(t *testing.T) {
 		t.Fatalf("POST oversized body leaked payload bytes: %q", body)
 	}
 
-	// A payload exactly at the limit is still signed.
-	resp, sig := postSign(t, ts.URL, bytes.Repeat([]byte("A"), 64))
+	// A valid commit exactly at the limit is still signed.
+	resp, sig := postSign(t, ts.URL, commit)
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("POST at limit status = %d, want 200: %s", resp.StatusCode, sig)
 	}
@@ -235,9 +238,9 @@ func TestSignInternalFailureReturns500(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewSSHKeygenSigner: %v", err)
 	}
-	ts := newTestHTTPServer(t, signer, "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIDummyDummyDummy", server.Config{})
+	ts := newTestHTTPServer(t, signer, "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIDummyDummyDummy", commitConfig())
 
-	resp, body := postSign(t, ts.URL, []byte("payload"))
+	resp, body := postSign(t, ts.URL, validCommit(testCommitterName, testCommitterEmail, "subject\n"))
 	if resp.StatusCode != http.StatusInternalServerError {
 		t.Fatalf("POST with broken signer status = %d, want 500: %s", resp.StatusCode, body)
 	}
@@ -270,7 +273,10 @@ func TestResponsesNeverLeakPrivateKey(t *testing.T) {
 	if err != nil {
 		t.Fatalf("PublicKey: %v", err)
 	}
-	ts := newTestHTTPServer(t, signer, publicKey, server.Config{MaxPayloadBytes: 32})
+	commit := validCommit(testCommitterName, testCommitterEmail, "subject\n")
+	cfg := commitConfig()
+	cfg.MaxPayloadBytes = int64(len(commit))
+	ts := newTestHTTPServer(t, signer, publicKey, cfg)
 
 	assertNoKeyMaterial := func(t *testing.T, body string) {
 		t.Helper()
@@ -284,10 +290,10 @@ func TestResponsesNeverLeakPrivateKey(t *testing.T) {
 		assertNoKeyMaterial(t, body)
 	}
 
-	_, sig := postSign(t, ts.URL, []byte("tree deadbeef\n\nsubject\n"))
+	_, sig := postSign(t, ts.URL, commit)
 	assertNoKeyMaterial(t, sig)
 
-	_, oversizeBody := postSign(t, ts.URL, bytes.Repeat([]byte("A"), 33))
+	_, oversizeBody := postSign(t, ts.URL, append(append([]byte(nil), commit...), 'x'))
 	assertNoKeyMaterial(t, oversizeBody)
 
 	rec := httptest.NewRecorder()

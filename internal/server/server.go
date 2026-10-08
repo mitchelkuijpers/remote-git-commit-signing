@@ -24,8 +24,12 @@ type Server struct {
 	publicKey   string
 	maxPayload  int64
 	signTimeout time.Duration
-	logger      *slog.Logger
-	mux         *http.ServeMux
+	// committerName and committerEmail are the pinned identity a commit must
+	// name to be signed.
+	committerName  string
+	committerEmail string
+	logger         *slog.Logger
+	mux            *http.ServeMux
 }
 
 // New builds the HTTP handler. publicKey is the derived public signing key; it
@@ -37,11 +41,13 @@ func New(signer signing.Signer, publicKey string, cfg Config, logger *slog.Logge
 	}
 
 	s := &Server{
-		signer:      signer,
-		publicKey:   publicKey,
-		maxPayload:  cfg.MaxPayloadBytes,
-		signTimeout: cfg.SignTimeout,
-		logger:      logger,
+		signer:         signer,
+		publicKey:      publicKey,
+		maxPayload:     cfg.MaxPayloadBytes,
+		signTimeout:    cfg.SignTimeout,
+		committerName:  cfg.CommitterName,
+		committerEmail: cfg.CommitterEmail,
+		logger:         logger,
 	}
 
 	mux := http.NewServeMux()
@@ -122,6 +128,17 @@ func (s *Server) handleSign(w http.ResponseWriter, r *http.Request) {
 			"event", "sign_request", "status", "payload_too_large",
 			"payload_bytes", len(payload), "duration_ms", elapsed())
 		writeText(w, http.StatusRequestEntityTooLarge, "payload too large")
+		return
+	}
+
+	// Commit-only: the payload must be a commit object naming the configured
+	// committer, unsigned, before it reaches the signing backend.
+	if check := s.checkCommit(payload); check.status != 0 {
+		s.logger.Warn("sign request refused",
+			"event", "sign_request", "status", "rejected", "reason", check.reason,
+			"payload_sha256", payloadHash(payload), "payload_bytes", len(payload),
+			"duration_ms", elapsed())
+		writeText(w, check.status, check.message)
 		return
 	}
 
