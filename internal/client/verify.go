@@ -3,11 +3,13 @@ package client
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"time"
+
+	"github.com/mitchelkuijpers/remote-git-commit-signing/internal/keyutil"
 )
 
 // verifyTimeout bounds a single local ssh-keygen verification invocation.
@@ -51,23 +53,18 @@ func verifySignature(ctx context.Context, keygen string, pinned publicKey, paylo
 		return fmt.Errorf("write signature for verification: %w", err)
 	}
 
-	ctx, cancel := context.WithTimeout(ctx, verifyTimeout)
-	defer cancel()
-
-	var stderr bytes.Buffer
-	cmd := exec.CommandContext(ctx, keygen, "-Y", "verify",
-		"-n", "git",
-		"-f", allowedPath,
-		"-I", allowedPrincipal,
-		"-s", sigPath)
-	cmd.Stdin = bytes.NewReader(payload)
-	cmd.Stderr = &stderr
-	if err := cmd.Run(); err != nil {
-		if ctxErr := ctx.Err(); ctxErr != nil {
-			return fmt.Errorf("verify signature: %w", ctxErr)
+	_, stderr, err := keyutil.RunKeygen(ctx, verifyTimeout, keygen,
+		[]string{"-Y", "verify",
+			"-n", "git",
+			"-f", allowedPath,
+			"-I", allowedPrincipal,
+			"-s", sigPath}, bytes.NewReader(payload), "")
+	if err != nil {
+		if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+			return fmt.Errorf("verify signature: %w", err)
 		}
 		return fmt.Errorf("signature failed local verification against pinned key: %w: %s",
-			err, bytes.TrimSpace(stderr.Bytes()))
+			err, bytes.TrimSpace(stderr))
 	}
 	return nil
 }
