@@ -76,8 +76,13 @@ func TestSignRejectsNonAllowlistedIdentity(t *testing.T) {
 func TestSignAllowlistSupportsExactNamesAndPatterns(t *testing.T) {
 	signer, publicKey := newSigner(t)
 	ts := newTestHTTPServer(t, signer, publicKey, server.Config{
-		Allowlist: server.Allowlist{"exact-vm", "agent-*"},
+		Allowlist:      server.Allowlist{"exact-vm", "agent-*"},
+		CommitterName:  testCommitterName,
+		CommitterEmail: testCommitterEmail,
+		RateBurst:      1000,
 	})
+
+	commit := validCommit(testCommitterName, testCommitterEmail, "message\n")
 
 	tests := map[string]int{
 		"exact-vm": http.StatusOK,
@@ -88,7 +93,7 @@ func TestSignAllowlistSupportsExactNamesAndPatterns(t *testing.T) {
 	}
 	for vm, want := range tests {
 		t.Run(vm, func(t *testing.T) {
-			resp, body := postSignAs(t, ts.URL, vm, []byte("payload"))
+			resp, body := postSignAs(t, ts.URL, vm, commit)
 			if resp.StatusCode != want {
 				t.Fatalf("POST /v1/sign as %q = %d, want %d: %s", vm, resp.StatusCode, want, body)
 			}
@@ -110,20 +115,24 @@ func TestSignEmptyAllowlistRefusesEveryone(t *testing.T) {
 func TestSignRateLimitIsPerIdentity(t *testing.T) {
 	signer, publicKey := newSigner(t)
 	ts := newTestHTTPServer(t, signer, publicKey, server.Config{
-		Allowlist:  server.Allowlist{"vm-a", "vm-b"},
-		RatePerMin: 1,
-		RateBurst:  2,
+		Allowlist:      server.Allowlist{"vm-a", "vm-b"},
+		CommitterName:  testCommitterName,
+		CommitterEmail: testCommitterEmail,
+		RatePerMin:     1,
+		RateBurst:      2,
 	})
 
+	commit := validCommit(testCommitterName, testCommitterEmail, "message\n")
+
 	for i, want := range []int{http.StatusOK, http.StatusOK, http.StatusTooManyRequests} {
-		resp, body := postSignAs(t, ts.URL, "vm-a", []byte("payload"))
+		resp, body := postSignAs(t, ts.URL, "vm-a", commit)
 		if resp.StatusCode != want {
 			t.Fatalf("vm-a request %d = %d, want %d: %s", i+1, resp.StatusCode, want, body)
 		}
 	}
 
 	// A different VM has its own bucket and is unaffected by vm-a's exhaustion.
-	resp, body := postSignAs(t, ts.URL, "vm-b", []byte("payload"))
+	resp, body := postSignAs(t, ts.URL, "vm-b", commit)
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("vm-b request = %d, want 200 (independent bucket): %s", resp.StatusCode, body)
 	}
@@ -162,11 +171,16 @@ func TestAuditLogLinePerSigningDecision(t *testing.T) {
 	signer, publicKey := newSigner(t)
 	var buf bytes.Buffer
 	logger := slog.New(slog.NewJSONHandler(&buf, nil))
-	srv := server.New(signer, publicKey, server.Config{Allowlist: server.Allowlist{"agent-*"}}, logger)
+	srv := server.New(signer, publicKey, server.Config{
+		Allowlist:      server.Allowlist{"agent-*"},
+		CommitterName:  testCommitterName,
+		CommitterEmail: testCommitterEmail,
+		RateBurst:      1000,
+	}, logger)
 	ts := httptest.NewServer(srv)
 	t.Cleanup(ts.Close)
 
-	payload := []byte("tree deadbeef\n\nsecret-subject-line\n")
+	payload := validCommit(testCommitterName, testCommitterEmail, "secret-subject-line\n")
 
 	resp, _ := postSignAs(t, ts.URL, "agent-1", payload)
 	if resp.StatusCode != http.StatusOK {
@@ -234,17 +248,24 @@ func TestAuditLogLinePerSigningDecision(t *testing.T) {
 
 func TestSignCountersTrackOutcomes(t *testing.T) {
 	signer, publicKey := newSigner(t)
-	srv := server.New(signer, publicKey, server.Config{Allowlist: server.Allowlist{"ok-vm"}}, discardLogger())
+	srv := server.New(signer, publicKey, server.Config{
+		Allowlist:      server.Allowlist{"ok-vm"},
+		CommitterName:  testCommitterName,
+		CommitterEmail: testCommitterEmail,
+		RateBurst:      1000,
+	}, discardLogger())
 	ts := httptest.NewServer(srv)
 	t.Cleanup(ts.Close)
 
-	if resp, _ := postSignAs(t, ts.URL, "ok-vm", []byte("payload")); resp.StatusCode != http.StatusOK {
+	commit := validCommit(testCommitterName, testCommitterEmail, "message\n")
+
+	if resp, _ := postSignAs(t, ts.URL, "ok-vm", commit); resp.StatusCode != http.StatusOK {
 		t.Fatalf("signed request = %d, want 200", resp.StatusCode)
 	}
-	if resp, _ := postSignAs(t, ts.URL, "intruder", []byte("payload")); resp.StatusCode != http.StatusForbidden {
+	if resp, _ := postSignAs(t, ts.URL, "intruder", commit); resp.StatusCode != http.StatusForbidden {
 		t.Fatalf("non-allowlisted request = %d, want 403", resp.StatusCode)
 	}
-	if resp, _ := postSignAs(t, ts.URL, "", []byte("payload")); resp.StatusCode != http.StatusUnauthorized {
+	if resp, _ := postSignAs(t, ts.URL, "", commit); resp.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("identity-less request = %d, want 401", resp.StatusCode)
 	}
 
@@ -258,11 +279,16 @@ func TestSignCountersTrackOutcomes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewSSHKeygenSigner: %v", err)
 	}
-	brokenSrv := server.New(broken, "ssh-ed25519 AAAA", server.Config{Allowlist: server.Allowlist{"ok-vm"}}, discardLogger())
+	brokenSrv := server.New(broken, "ssh-ed25519 AAAA", server.Config{
+		Allowlist:      server.Allowlist{"ok-vm"},
+		CommitterName:  testCommitterName,
+		CommitterEmail: testCommitterEmail,
+		RateBurst:      1000,
+	}, discardLogger())
 	brokenTS := httptest.NewServer(brokenSrv)
 	t.Cleanup(brokenTS.Close)
 
-	if resp, _ := postSignAs(t, brokenTS.URL, "ok-vm", []byte("payload")); resp.StatusCode != http.StatusInternalServerError {
+	if resp, _ := postSignAs(t, brokenTS.URL, "ok-vm", commit); resp.StatusCode != http.StatusInternalServerError {
 		t.Fatalf("failing signer request = %d, want 500", resp.StatusCode)
 	}
 	if got := brokenSrv.Stats(); got.Failed != 1 || got.Signed != 0 {
