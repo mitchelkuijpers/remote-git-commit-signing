@@ -9,6 +9,10 @@
 // returned SSHSIG against the pinned public key in
 // GIT_REMOTE_SIGNER_PUBLIC_KEY, and only then writes <bufferfile>.sig. Any
 // failure exits non-zero (and removes a partial .sig) so Git aborts the commit.
+//
+// Git's verification operations (-Y verify, -Y find-principals,
+// -Y check-novalidate) are delegated verbatim to the system ssh-keygen, with
+// argv, stdin/stdout and exit code preserved.
 package main
 
 import (
@@ -18,5 +22,5 @@ import (
 )
 
 func main() {
-	os.Exit(client.Run(os.Args, os.Getenv, os.Stderr))
+	os.Exit(client.Run(os.Args, os.Getenv, os.Stdin, os.Stdout, os.Stderr))
 }
