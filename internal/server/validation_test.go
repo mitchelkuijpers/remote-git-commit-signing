@@ -28,6 +28,90 @@ func validCommit(committerName, committerEmail, message string) []byte {
 		"\n" + message)
 }
 
+func TestSignRejectsPreExistingSignature(t *testing.T) {
+	signer, publicKey := newSigner(t)
+	ts := newTestHTTPServer(t, signer, publicKey, commitConfig())
+
+	const prefix = "tree 4b825dc642cb6eb9a060e54bf8d69288fbee4904\n" +
+		"author Author Person <author@example.com> 1700000000 +0000\n" +
+		"committer " + testCommitterName + " <" + testCommitterEmail + "> 1700000000 +0000\n"
+
+	cases := []struct {
+		name    string
+		payload string
+	}{
+		{"single-line gpgsig", prefix + "gpgsig -----BEGIN SSH SIGNATURE-----\n\nmessage\n"},
+		{"multiline gpgsig", prefix +
+			"gpgsig -----BEGIN SSH SIGNATURE-----\n" +
+			" U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAg\n" +
+			" AAAAQMUQMKCRzepWv86gHWChUGZk8DYfMgHBEx+FIlhE4cxFw5wMFJ6w\n" +
+			" -----END SSH SIGNATURE-----\n" +
+			"\nmessage\n"},
+		{"gpgsig-sha256", prefix + "gpgsig-sha256 -----BEGIN SSH SIGNATURE-----\n\nmessage\n"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			resp, body := postSign(t, ts.URL, []byte(tc.payload))
+			if resp.StatusCode != http.StatusUnprocessableEntity {
+				t.Fatalf("POST already-signed commit status = %d, want 422: %s", resp.StatusCode, body)
+			}
+			if strings.Contains(body, "U1NIU0lH") {
+				t.Fatalf("POST already-signed commit echoed signature bytes: %q", body)
+			}
+		})
+	}
+}
+
+func TestSignRejectsCommitterMismatch(t *testing.T) {
+	signer, publicKey := newSigner(t)
+	ts := newTestHTTPServer(t, signer, publicKey, commitConfig())
+
+	cases := []struct {
+		name  string
+		value string
+	}{
+		{"different name", "Other Person <" + testCommitterEmail + "> 1700000000 +0000"},
+		{"different email", testCommitterName + " <other@example.com> 1700000000 +0000"},
+		{"wrong case email", testCommitterName + " <COMMITTER@example.com> 1700000000 +0000"},
+		{"display name suffixed", testCommitterName + " Jr <" + testCommitterEmail + "> 1700000000 +0000"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			payload := []byte("tree 4b825dc642cb6eb9a060e54bf8d69288fbee4904\n" +
+				"author Author Person <author@example.com> 1700000000 +0000\n" +
+				"committer " + tc.value + "\n" +
+				"\nmessage\n")
+			resp, body := postSign(t, ts.URL, payload)
+			if resp.StatusCode != http.StatusConflict {
+				t.Fatalf("POST committer mismatch status = %d, want 409: %s", resp.StatusCode, body)
+			}
+			if strings.Contains(body, tc.value) {
+				t.Fatalf("POST committer mismatch echoed the payload: %q", body)
+			}
+		})
+	}
+}
+
+// TestSignAllowsAuthorIdentityMismatch documents that only the committer is
+// pinned: GitLab verifies the committer, and the author is explicitly out of
+// scope.
+func TestSignAllowsAuthorIdentityMismatch(t *testing.T) {
+	signer, publicKey := newSigner(t)
+	ts := newTestHTTPServer(t, signer, publicKey, commitConfig())
+
+	payload := []byte("tree 4b825dc642cb6eb9a060e54bf8d69288fbee4904\n" +
+		"author Someone Else <someone-else@example.com> 1700000000 +0000\n" +
+		"committer " + testCommitterName + " <" + testCommitterEmail + "> 1700000000 +0000\n" +
+		"\nmessage\n")
+
+	resp, sig := postSign(t, ts.URL, payload)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("POST author-mismatch/committer-match status = %d, want 200: %s", resp.StatusCode, sig)
+	}
+}
+
 func TestSignRejectsMalformedCommit(t *testing.T) {
 	signer, publicKey := newSigner(t)
 	ts := newTestHTTPServer(t, signer, publicKey, commitConfig())
