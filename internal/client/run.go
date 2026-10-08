@@ -14,73 +14,78 @@ import (
 
 // Run executes the git-remote-sign program and returns its exit code.
 //
-// argv is os.Args form; getenv is normally os.Getenv; diagnostic output is
-// written to stderr. On any failure Run removes a partial <bufferfile>.sig and
-// returns non-zero so Git aborts the commit.
-func Run(argv []string, getenv func(string) string, stderr io.Writer) int {
-	buffer, err := run(argv, getenv)
+// argv is os.Args form; getenv is normally os.Getenv; stdin/stdout/stderr are
+// the process's standard streams. Signing failures remove a partial
+// <bufferfile>.sig and return non-zero so Git aborts the commit; verify
+// operations return ssh-keygen's own exit code unchanged.
+func Run(argv []string, getenv func(string) string, stdin io.Reader, stdout, stderr io.Writer) int {
+	inv, err := parseInvocation(argv)
 	if err != nil {
-		if buffer != "" {
-			// Never leave a partial/unverified signature behind.
-			os.Remove(buffer + ".sig")
-		}
+		fmt.Fprintf(stderr, "git-remote-sign: %v\n", err)
+		return 1
+	}
+
+	// Verification (and its fallbacks) belongs to the real ssh-keygen: Git
+	// drives its own two-step protocol through this program and, in verify
+	// mode, passes the allowed-signers file as -f. Delegate verbatim.
+	if isPassthroughOperation(inv.op) {
+		return runPassthrough(context.Background(), argv, stdin, stdout, stderr)
+	}
+
+	if inv.op != "sign" {
+		// Unknown operations fail loudly rather than being handled wrongly.
+		fmt.Fprintf(stderr, "git-remote-sign: operation %q is not implemented yet\n", inv.op)
+		return 1
+	}
+
+	if err := runSign(inv, getenv); err != nil {
+		// Never leave a partial/unverified signature behind.
+		os.Remove(inv.bufferFile + ".sig")
 		fmt.Fprintf(stderr, "git-remote-sign: %v\n", err)
 		return 1
 	}
 	return 0
 }
 
-// run performs one invocation. It returns the signing buffer path (when known)
-// so that Run can clean up a partial .sig on failure.
-func run(argv []string, getenv func(string) string) (bufferFile string, err error) {
-	inv, err := parseInvocation(argv)
-	if err != nil {
-		return "", err
-	}
-	if inv.op != "sign" {
-		// Verification operations are delegated to real ssh-keygen in a later
-		// slice; fail loudly rather than silently mis-handling them.
-		return "", fmt.Errorf("operation %q is not implemented yet", inv.op)
-	}
-	bufferFile = inv.bufferFile
-
+// runSign performs one signing invocation for a fully validated invocation.
+func runSign(inv invocation, getenv func(string) string) error {
 	cfg, err := loadConfig(getenv)
 	if err != nil {
-		return bufferFile, err
+		return err
 	}
 
 	keygen, err := exec.LookPath("ssh-keygen")
 	if err != nil {
-		return bufferFile, fmt.Errorf("ssh-keygen not found in PATH: %w", err)
+		return fmt.Errorf("ssh-keygen not found in PATH: %w", err)
 	}
 
 	// The key Git asks us to sign with must be exactly the pinned trusted key.
 	requested, err := readPublicKeyFile(inv.keyFile)
 	if err != nil {
-		return bufferFile, err
+		return err
 	}
 	if !requested.equal(cfg.pinned) {
-		return bufferFile, fmt.Errorf("signing key %s does not match the pinned %s key", inv.keyFile, envPublicKey)
+		return fmt.Errorf("signing key %s does not match the pinned %s key", inv.keyFile, envPublicKey)
 	}
 
-	payload, err := os.ReadFile(bufferFile)
+	payload, err := os.ReadFile(inv.bufferFile)
 	if err != nil {
-		return bufferFile, fmt.Errorf("read signing buffer %s: %w", bufferFile, err)
+		return fmt.Errorf("read signing buffer %s: %w", inv.bufferFile, err)
 	}
 
 	sig, err := fetchSignature(cfg, payload)
 	if err != nil {
-		return bufferFile, err
+		return err
 	}
 
 	if err := verifySignature(context.Background(), keygen, cfg.pinned, payload, sig); err != nil {
-		return bufferFile, err
+		return err
 	}
 
-	if err := writeSignatureAtomic(bufferFile+".sig", sig); err != nil {
-		return bufferFile, err
+	if err := writeSignatureAtomic(inv.bufferFile+".sig", sig); err != nil {
+		return err
 	}
-	return bufferFile, nil
+	return nil
 }
 
 // fetchSignature POSTs the exact payload bytes to the signer and returns the

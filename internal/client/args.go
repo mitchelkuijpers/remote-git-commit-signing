@@ -8,6 +8,10 @@
 // returned SSHSIG locally against the pinned public key, and only then writes
 // <bufferfile>.sig. Any failure exits non-zero (and removes a partial .sig) so
 // that Git aborts the commit instead of embedding an unverified signature.
+//
+// Git also routes verification through the configured program
+// (-Y verify, -Y find-principals, -Y check-novalidate). Those operations are
+// delegated verbatim to the system ssh-keygen; only signing is intercepted.
 package client
 
 import (
