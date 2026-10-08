@@ -15,6 +15,21 @@ const (
 	reasonPayloadTooLarge   = "payload_too_large"
 )
 
+// noteRejection annotates the request's audit decision with the rejection
+// reason. The authorization middleware owns the single audit log line; this
+// only adds metadata. declaredBytes, when non-negative, records the payload
+// size for rejections that never read the body.
+func noteRejection(r *http.Request, reason string, declaredBytes int64) {
+	d := decisionFrom(r.Context())
+	if d == nil {
+		return
+	}
+	d.reason = reason
+	if declaredBytes >= 0 {
+		d.payloadBytes = int(declaredBytes)
+	}
+}
+
 // commitCheck is the outcome of validating a signing payload as a commit
 // object whose committer is the configured identity. A zero status means the
 // payload is acceptable.

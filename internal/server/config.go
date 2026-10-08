@@ -3,6 +3,7 @@ package server
 import (
 	"fmt"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/mitchelkuijpers/remote-git-commit-signing/internal/signing"
@@ -12,12 +13,25 @@ import (
 // unset.
 const DefaultPort = 8000
 
+// Rate limit defaults for POST /v1/sign, applied per VM identity.
+const (
+	// DefaultRatePerMin is the sustained per-VM refill rate when
+	// SIGNER_RATE_PER_MIN is unset.
+	DefaultRatePerMin = 60
+	// DefaultRateBurst is the per-VM token bucket capacity when
+	// SIGNER_RATE_BURST is unset.
+	DefaultRateBurst = 10
+)
+
 // Environment variable names understood by LoadConfig.
 const (
 	envKeyPath        = "SIGNER_KEY_PATH"
 	envPort           = "SIGNER_PORT"
 	envCommitterName  = "SIGNER_COMMITTER_NAME"
 	envCommitterEmail = "SIGNER_COMMITTER_EMAIL"
+	envAllowlist      = "SIGNER_ALLOWLIST"
+	envRatePerMin     = "SIGNER_RATE_PER_MIN"
+	envRateBurst      = "SIGNER_RATE_BURST"
 )
 
 // Config is the server configuration, sourced from the environment.
@@ -38,6 +52,16 @@ type Config struct {
 	// objects naming exactly this identity.
 	CommitterName  string
 	CommitterEmail string
+	// Allowlist is the set of VM identities permitted to sign, given as exact
+	// names or path.Match glob patterns. There is no allow-all default: when
+	// SIGNER_ALLOWLIST is unset the list is empty and every request is refused.
+	Allowlist Allowlist
+	// RatePerMin is the sustained per-VM refill rate for signing requests.
+	// Defaults to DefaultRatePerMin.
+	RatePerMin int
+	// RateBurst is the per-VM token bucket capacity, i.e. the largest burst of
+	// signing requests admitted at once. Defaults to DefaultRateBurst.
+	RateBurst int
 }
 
 // LoadConfig reads configuration through getenv (normally os.Getenv). It
@@ -48,6 +72,8 @@ func LoadConfig(getenv func(string) string) (Config, error) {
 		Port:           DefaultPort,
 		CommitterName:  getenv(envCommitterName),
 		CommitterEmail: getenv(envCommitterEmail),
+		RatePerMin:     DefaultRatePerMin,
+		RateBurst:      DefaultRateBurst,
 	}
 
 	if cfg.KeyPath == "" {
@@ -72,7 +98,46 @@ func LoadConfig(getenv func(string) string) (Config, error) {
 		cfg.Port = port
 	}
 
+	cfg.Allowlist = parseAllowlist(getenv(envAllowlist))
+
+	if raw := getenv(envRatePerMin); raw != "" {
+		rate, err := parsePositiveInt(envRatePerMin, raw)
+		if err != nil {
+			return Config{}, err
+		}
+		cfg.RatePerMin = rate
+	}
+
+	if raw := getenv(envRateBurst); raw != "" {
+		burst, err := parsePositiveInt(envRateBurst, raw)
+		if err != nil {
+			return Config{}, err
+		}
+		cfg.RateBurst = burst
+	}
+
 	return cfg, nil
+}
+
+// parseAllowlist splits a comma-separated allowlist, trimming blank entries.
+// An empty or unset value yields an empty allowlist: refuse everyone.
+func parseAllowlist(raw string) Allowlist {
+	var list Allowlist
+	for _, entry := range strings.Split(raw, ",") {
+		if entry = strings.TrimSpace(entry); entry != "" {
+			list = append(list, entry)
+		}
+	}
+	return list
+}
+
+// parsePositiveInt parses a strictly positive integer setting.
+func parsePositiveInt(name, raw string) (int, error) {
+	n, err := strconv.Atoi(raw)
+	if err != nil || n < 1 {
+		return 0, fmt.Errorf("%s: invalid value %q", name, raw)
+	}
+	return n, nil
 }
 
 // withDefaults fills the optional fields and returns the result.
@@ -85,6 +150,12 @@ func (c Config) withDefaults() Config {
 	}
 	if c.SignTimeout <= 0 {
 		c.SignTimeout = signing.DefaultTimeout
+	}
+	if c.RatePerMin <= 0 {
+		c.RatePerMin = DefaultRatePerMin
+	}
+	if c.RateBurst <= 0 {
+		c.RateBurst = DefaultRateBurst
 	}
 	return c
 }

@@ -20,11 +20,6 @@ const (
 	testCommitterEmail = "committer@example.com"
 )
 
-// commitConfig is a server config with the committer identity pinned.
-func commitConfig() server.Config {
-	return server.Config{CommitterName: testCommitterName, CommitterEmail: testCommitterEmail}
-}
-
 // validCommit builds a well-formed commit payload naming the given committer.
 func validCommit(committerName, committerEmail, message string) []byte {
 	return []byte("tree 4b825dc642cb6eb9a060e54bf8d69288fbee4904\n" +
@@ -36,7 +31,7 @@ func validCommit(committerName, committerEmail, message string) []byte {
 
 func TestSignRejectsPreExistingSignature(t *testing.T) {
 	signer, publicKey := newSigner(t)
-	ts := newTestHTTPServer(t, signer, publicKey, commitConfig())
+	ts := newTestHTTPServer(t, signer, publicKey, signConfig())
 
 	const prefix = "tree 4b825dc642cb6eb9a060e54bf8d69288fbee4904\n" +
 		"author Author Person <author@example.com> 1700000000 +0000\n" +
@@ -71,7 +66,7 @@ func TestSignRejectsPreExistingSignature(t *testing.T) {
 
 func TestSignRejectsCommitterMismatch(t *testing.T) {
 	signer, publicKey := newSigner(t)
-	ts := newTestHTTPServer(t, signer, publicKey, commitConfig())
+	ts := newTestHTTPServer(t, signer, publicKey, signConfig())
 
 	cases := []struct {
 		name  string
@@ -105,7 +100,7 @@ func TestSignRejectsCommitterMismatch(t *testing.T) {
 // scope.
 func TestSignAllowsAuthorIdentityMismatch(t *testing.T) {
 	signer, publicKey := newSigner(t)
-	ts := newTestHTTPServer(t, signer, publicKey, commitConfig())
+	ts := newTestHTTPServer(t, signer, publicKey, signConfig())
 
 	payload := []byte("tree 4b825dc642cb6eb9a060e54bf8d69288fbee4904\n" +
 		"author Someone Else <someone-else@example.com> 1700000000 +0000\n" +
@@ -120,7 +115,7 @@ func TestSignAllowsAuthorIdentityMismatch(t *testing.T) {
 
 func TestSignRejectsMalformedCommit(t *testing.T) {
 	signer, publicKey := newSigner(t)
-	ts := newTestHTTPServer(t, signer, publicKey, commitConfig())
+	ts := newTestHTTPServer(t, signer, publicKey, signConfig())
 
 	cases := []struct {
 		name    string
@@ -160,7 +155,7 @@ func TestSignRejectsMalformedCommit(t *testing.T) {
 // the decision.
 func TestSignAcceptsAdversarialButValidPayloads(t *testing.T) {
 	signer, publicKey := newSigner(t)
-	ts := newTestHTTPServer(t, signer, publicKey, commitConfig())
+	ts := newTestHTTPServer(t, signer, publicKey, signConfig())
 
 	// valid builds a commit with the pinned committer and extra headers/message.
 	valid := func(headers, message string) []byte {
@@ -219,7 +214,7 @@ func TestSignAcceptsAdversarialButValidPayloads(t *testing.T) {
 func TestSignRejectsValidCommitOverLimit(t *testing.T) {
 	signer, publicKey := newSigner(t)
 	commit := validCommit(testCommitterName, testCommitterEmail, "subject\n")
-	cfg := commitConfig()
+	cfg := signConfig()
 	cfg.MaxPayloadBytes = int64(len(commit) + 8) // room for the extra bytes below
 	ts := newTestHTTPServer(t, signer, publicKey, cfg)
 
@@ -240,7 +235,7 @@ func TestSignRejectsValidCommitOverLimit(t *testing.T) {
 // be distinguishable by status alone.
 func TestSignRejectionClassesUseDistinct4xxStatuses(t *testing.T) {
 	signer, publicKey := newSigner(t)
-	cfg := commitConfig()
+	cfg := signConfig()
 	cfg.MaxPayloadBytes = 4096
 	ts := newTestHTTPServer(t, signer, publicKey, cfg)
 
@@ -281,7 +276,7 @@ func TestSignRejectionsLogReasonWithoutPayload(t *testing.T) {
 	var buf bytes.Buffer
 	logger := slog.New(slog.NewJSONHandler(&buf, nil))
 
-	cfg := commitConfig()
+	cfg := signConfig()
 	cfg.MaxPayloadBytes = 1024
 	ts := httptest.NewServer(server.New(signer, publicKey, cfg, logger))
 	t.Cleanup(ts.Close)
@@ -357,7 +352,7 @@ func TestSignRealCommitPayload(t *testing.T) {
 	}
 
 	signer, publicKey := newSigner(t)
-	ts := newTestHTTPServer(t, signer, publicKey, commitConfig())
+	ts := newTestHTTPServer(t, signer, publicKey, signConfig())
 
 	dir := t.TempDir()
 	run := func(args ...string) string {

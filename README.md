@@ -48,33 +48,76 @@ Additional docs (`architecture`, `exe-dev-setup`, `gitlab-setup`, `security`,
 
 ## Running the signer locally
 
-`git-signer-server` listens on port `8000` (override with `SIGNER_PORT`) and needs one
-required setting, the path to the private signing key (`SIGNER_KEY_PATH`, no default):
+`git-signer-server` listens on port `8000` (override with `SIGNER_PORT`) and needs three
+required settings with no defaults: the path to the private signing key
+(`SIGNER_KEY_PATH`) and the pinned committer identity (`SIGNER_COMMITTER_NAME`,
+`SIGNER_COMMITTER_EMAIL`) that every signed commit must name:
 
 ```bash
 ssh-keygen -t ed25519 -N '' -C git-signer -f /tmp/signing_key
-SIGNER_KEY_PATH=/tmp/signing_key go run ./cmd/git-signer-server
+SIGNER_KEY_PATH=/tmp/signing_key \
+  SIGNER_COMMITTER_NAME='Dev Eloper' SIGNER_COMMITTER_EMAIL='dev@example.com' \
+  SIGNER_ALLOWLIST='agent-*' go run ./cmd/git-signer-server
 ```
 
 ```bash
 curl -s http://127.0.0.1:8000/healthz                  # liveness
 curl -s http://127.0.0.1:8000/readyz                   # readiness (503 until the key loads)
 curl -s http://127.0.0.1:8000/v1/public-key            # public signing key
-curl -s --data-binary @commit-payload \
+curl -s -H 'X-Exedev-Source-Vm: agent-1' --data-binary @commit-payload \
   http://127.0.0.1:8000/v1/sign                        # raw SSHSIG PEM
 ```
 
-The API also accepts the committer identity settings `SIGNER_COMMITTER_NAME` and
-`SIGNER_COMMITTER_EMAIL`; they are parsed but not yet enforced (commit validation is a
-later slice).
+`POST /v1/sign` requires the platform-verified source-VM identity
+(`X-Exedev-Source-Vm`, set by the exe.dev peer proxy in production) and authorizes it
+against `SIGNER_ALLOWLIST`, a comma-separated list of exact VM names and `path.Match`
+glob patterns (for example `agent-*,ci-runner`). There is no allow-all default: an unset
+or empty allowlist refuses every request (401 when the identity is missing, 403 when it
+is not allowlisted). Per-VM rate limiting returns 429 once a VM exhausts its token
+bucket; the sustained rate is `SIGNER_RATE_PER_MIN` (default 60) with a burst capacity of
+`SIGNER_RATE_BURST` (default 10). Every signing decision emits one structured `slog`
+JSON audit line carrying the VM, payload SHA-256, status and duration — never the payload.
+
+`POST /v1/sign` signs commits only. The payload is parsed structurally as a git commit
+object (headers with continuation lines, blank-line separator, message body — never
+regex-matched) and must name exactly the configured committer
+(`SIGNER_COMMITTER_NAME`/`SIGNER_COMMITTER_EMAIL`). Anything else is refused before it
+reaches the signing backend, with a distinct status: malformed payload `400`, oversized
+payload `413`, payload already carrying a `gpgsig` header `422`, and a committer other
+than the pinned identity `409`. The rejection reason is logged as metadata only (a stable
+reason code, the payload SHA-256, its size) — never the payload itself. The author's
+identity is deliberately not checked: GitLab verifies the committer.
+
+## Running the client
+
+`git-remote-sign` implements the signing half of Git's `gpg.ssh.program` contract. It is
+configured with two required environment variables and an optional timeout:
+
+```bash
+export GIT_REMOTE_SIGNER_URL=http://127.0.0.1:8000
+export GIT_REMOTE_SIGNER_PUBLIC_KEY="$HOME/.config/git-remote-signer/signing.pub"
+export GIT_REMOTE_SIGN_TIMEOUT=10s   # optional; default 10s
+```
+
+`GIT_REMOTE_SIGNER_PUBLIC_KEY` is the *pinned* trusted key: either a literal
+authorized_keys line or a path to a file containing one. The key passed by Git as
+`-f`/`user.signingkey` must match it, and every signature returned by the server is
+verified locally against the pinned key before `<buffer>.sig` is written. Any failure
+exits non-zero and removes a partial `.sig`, so Git aborts the commit. Verification
+operations (`verify`, `find-principals`, `check-novalidate`) are delegated to the real
+`ssh-keygen` in a later slice and currently fail loudly with `not implemented yet`.
 
 ## Status
 
 🚧 **Milestone 1 in progress.** The [spike](docs/git-ssh-signing-interface.md) verified
 Git's `gpg.ssh.program` contract, the [spec](docs/spec.md) is ready, and the signer server's
 minimal HTTP API (`POST /v1/sign`, `GET /v1/public-key`, `GET /healthz`, `GET /readyz`)
-is implemented on top of the `ssh-keygen` signing backend. Next: the `git-remote-sign`
-client and the end-to-end `git commit` flow.
+is implemented on top of the `ssh-keygen` signing backend, with VM-identity authorization
+(identity header, allowlist, per-VM rate limit, audit log) and structural commit
+validation (pinned committer, size limit, no pre-existing `gpgsig`) on `POST /v1/sign`. The
+`git-remote-sign` client now implements the signing half of the `gpg.ssh.program` contract
+(payload forwarding, pinned-key check, local signature verification, atomic `.sig` write).
+Next: verify-path delegation and the end-to-end `git commit` flow.
 
 ## License
 
