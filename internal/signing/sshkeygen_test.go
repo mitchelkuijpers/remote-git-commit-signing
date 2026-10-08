@@ -3,10 +3,14 @@ package signing_test
 import (
 	"bytes"
 	"context"
+	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/mitchelkuijpers/remote-git-commit-signing/internal/signing"
 )
@@ -72,6 +76,128 @@ func TestSSHKeygenSignerSignsVerifiableSignature(t *testing.T) {
 	// The signature must be independent of our implementation: stock ssh-keygen
 	// re-validates it against the payload.
 	verifySignature(t, sig, payload)
+}
+
+func TestSSHKeygenSignerRejectsOversizedPayload(t *testing.T) {
+	signer, err := signing.NewSSHKeygenSigner(signing.SSHKeygenConfig{
+		KeyPath:         "/nonexistent/key",
+		MaxPayloadBytes: 16,
+	})
+	if err != nil {
+		t.Fatalf("NewSSHKeygenSigner: %v", err)
+	}
+
+	if _, err := signer.Sign(context.Background(), make([]byte, 17)); !errors.Is(err, signing.ErrPayloadTooLarge) {
+		t.Fatalf("Sign(oversized) error = %v, want ErrPayloadTooLarge", err)
+	}
+	// A payload exactly at the limit is accepted (delegated to ssh-keygen, so
+	// it fails only because the key is missing, never with ErrPayloadTooLarge).
+	if _, err := signer.Sign(context.Background(), make([]byte, 16)); errors.Is(err, signing.ErrPayloadTooLarge) {
+		t.Fatalf("Sign(at limit) error = %v, want no ErrPayloadTooLarge", err)
+	}
+}
+
+func TestNewSSHKeygenSignerRequiresKeyPath(t *testing.T) {
+	if _, err := signing.NewSSHKeygenSigner(signing.SSHKeygenConfig{}); err == nil {
+		t.Fatal("NewSSHKeygenSigner(empty KeyPath) = nil error, want error")
+	}
+}
+
+func TestSSHKeygenSignerHonoursTimeout(t *testing.T) {
+	keyPath := newTestKey(t)
+	base := t.TempDir()
+
+	signer, err := signing.NewSSHKeygenSigner(signing.SSHKeygenConfig{
+		KeyPath: keyPath,
+		Timeout: time.Nanosecond,
+		TempDir: base,
+	})
+	if err != nil {
+		t.Fatalf("NewSSHKeygenSigner: %v", err)
+	}
+
+	if _, err := signer.Sign(context.Background(), []byte("payload")); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("Sign(timed out) error = %v, want context.DeadlineExceeded", err)
+	}
+	assertEmptyDir(t, base)
+}
+
+func TestSSHKeygenSignerCleansUpTempFiles(t *testing.T) {
+	keyPath := newTestKey(t)
+
+	t.Run("success", func(t *testing.T) {
+		base := t.TempDir()
+		signer, err := signing.NewSSHKeygenSigner(signing.SSHKeygenConfig{KeyPath: keyPath, TempDir: base})
+		if err != nil {
+			t.Fatalf("NewSSHKeygenSigner: %v", err)
+		}
+		if _, err := signer.Sign(context.Background(), []byte("payload")); err != nil {
+			t.Fatalf("Sign: %v", err)
+		}
+		assertEmptyDir(t, base)
+	})
+
+	t.Run("ssh-keygen failure", func(t *testing.T) {
+		base := t.TempDir()
+		signer, err := signing.NewSSHKeygenSigner(signing.SSHKeygenConfig{
+			KeyPath: filepath.Join(t.TempDir(), "missing-key"),
+			TempDir: base,
+		})
+		if err != nil {
+			t.Fatalf("NewSSHKeygenSigner: %v", err)
+		}
+		if _, err := signer.Sign(context.Background(), []byte("payload")); err == nil {
+			t.Fatal("Sign with missing key = nil error, want error")
+		}
+		assertEmptyDir(t, base)
+	})
+}
+
+func TestSSHKeygenSignerConcurrentSigns(t *testing.T) {
+	keyPath := newTestKey(t)
+	base := t.TempDir()
+	signer, err := signing.NewSSHKeygenSigner(signing.SSHKeygenConfig{KeyPath: keyPath, TempDir: base})
+	if err != nil {
+		t.Fatalf("NewSSHKeygenSigner: %v", err)
+	}
+
+	const n = 8
+	payloads := make([][]byte, n)
+	sigs := make([][]byte, n)
+	errs := make([]error, n)
+	var wg sync.WaitGroup
+	for i := range n {
+		payloads[i] = []byte(fmt.Sprintf("tree %d\n\npayload %d\n", i, i))
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			sigs[i], errs[i] = signer.Sign(context.Background(), payloads[i])
+		}(i)
+	}
+	wg.Wait()
+
+	for i := range n {
+		if errs[i] != nil {
+			t.Fatalf("concurrent Sign[%d]: %v", i, errs[i])
+		}
+		verifySignature(t, sigs[i], payloads[i])
+	}
+	assertEmptyDir(t, base)
+}
+
+func assertEmptyDir(t *testing.T, dir string) {
+	t.Helper()
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("ReadDir(%s): %v", dir, err)
+	}
+	if len(entries) != 0 {
+		names := make([]string, len(entries))
+		for i, e := range entries {
+			names[i] = e.Name()
+		}
+		t.Fatalf("temp dir %s not cleaned up, contains %v", dir, names)
+	}
 }
 
 func firstLine(b []byte) string {
