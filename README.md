@@ -68,13 +68,34 @@ The API also accepts the committer identity settings `SIGNER_COMMITTER_NAME` and
 `SIGNER_COMMITTER_EMAIL`; they are parsed but not yet enforced (commit validation is a
 later slice).
 
+## Running the client
+
+`git-remote-sign` implements the signing half of Git's `gpg.ssh.program` contract. It is
+configured with two required environment variables and an optional timeout:
+
+```bash
+export GIT_REMOTE_SIGNER_URL=http://127.0.0.1:8000
+export GIT_REMOTE_SIGNER_PUBLIC_KEY="$HOME/.config/git-remote-signer/signing.pub"
+export GIT_REMOTE_SIGN_TIMEOUT=10s   # optional; default 10s
+```
+
+`GIT_REMOTE_SIGNER_PUBLIC_KEY` is the *pinned* trusted key: either a literal
+authorized_keys line or a path to a file containing one. The key passed by Git as
+`-f`/`user.signingkey` must match it, and every signature returned by the server is
+verified locally against the pinned key before `<buffer>.sig` is written. Any failure
+exits non-zero and removes a partial `.sig`, so Git aborts the commit. Verification
+operations (`verify`, `find-principals`, `check-novalidate`) are delegated to the real
+`ssh-keygen` in a later slice and currently fail loudly with `not implemented yet`.
+
 ## Status
 
 🚧 **Milestone 1 in progress.** The [spike](docs/git-ssh-signing-interface.md) verified
 Git's `gpg.ssh.program` contract, the [spec](docs/spec.md) is ready, and the signer server's
 minimal HTTP API (`POST /v1/sign`, `GET /v1/public-key`, `GET /healthz`, `GET /readyz`)
-is implemented on top of the `ssh-keygen` signing backend. Next: the `git-remote-sign`
-client and the end-to-end `git commit` flow.
+is implemented on top of the `ssh-keygen` signing backend. The `git-remote-sign` client
+now implements the signing half of the `gpg.ssh.program` contract (payload forwarding,
+pinned-key check, local signature verification, atomic `.sig` write). Next: verify-path
+delegation and the end-to-end `git commit` flow.
 
 ## License
 
