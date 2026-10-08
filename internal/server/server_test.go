@@ -144,7 +144,7 @@ func TestSignRoundTrip(t *testing.T) {
 	signer, publicKey := newSigner(t)
 	ts := newTestHTTPServer(t, signer, publicKey, signConfig())
 
-	payload := []byte("tree 4b825dc642cb6eb9a060e54bf8d69288fbee4904\nauthor Test <test@example.com> 1700000000 +0000\ncommitter Test <test@example.com> 1700000000 +0000\n\nsubject line\n")
+	payload := validCommit(testCommitterName, testCommitterEmail, "subject line\n")
 
 	resp, sig := postSign(t, ts.URL, payload)
 	if resp.StatusCode != http.StatusOK {
@@ -185,20 +185,30 @@ func postSign(t *testing.T, baseURL string, payload []byte) (*http.Response, str
 // signConfig.
 const testVM = "test-vm"
 
-// signConfig returns a server config that admits testVM to POST /v1/sign.
-// Authorization is fail-closed (ticket #7): tests that exercise signing must
-// configure an allowlist and carry an identity.
+// signConfig returns a server config that admits testVM to POST /v1/sign and
+// pins the committer identity. Authorization is fail-closed (ticket #7): tests
+// that exercise signing must configure an allowlist and carry an identity.
+// Commit validation (ticket #6) additionally requires the payload to name the
+// pinned committer. The rate budget is raised well above what a single test
+// needs, so only the dedicated rate-limit test observes throttling.
 func signConfig() server.Config {
-	return server.Config{Allowlist: server.Allowlist{testVM}}
+	return server.Config{
+		Allowlist:      server.Allowlist{testVM},
+		CommitterName:  testCommitterName,
+		CommitterEmail: testCommitterEmail,
+		RatePerMin:     server.DefaultRatePerMin,
+		RateBurst:      1000,
+	}
 }
 
 func TestSignRejectsOversizedBody(t *testing.T) {
 	signer, publicKey := newSigner(t)
+	commit := validCommit(testCommitterName, testCommitterEmail, "subject line\n")
 	cfg := signConfig()
-	cfg.MaxPayloadBytes = 64
+	cfg.MaxPayloadBytes = int64(len(commit))
 	ts := newTestHTTPServer(t, signer, publicKey, cfg)
 
-	resp, body := postSign(t, ts.URL, bytes.Repeat([]byte("A"), 65))
+	resp, body := postSign(t, ts.URL, bytes.Repeat([]byte("A"), len(commit)+1))
 	if resp.StatusCode != http.StatusRequestEntityTooLarge {
 		t.Fatalf("POST oversized status = %d, want 413: %s", resp.StatusCode, body)
 	}
@@ -206,8 +216,8 @@ func TestSignRejectsOversizedBody(t *testing.T) {
 		t.Fatalf("POST oversized body leaked payload bytes: %q", body)
 	}
 
-	// A payload exactly at the limit is still signed.
-	resp, sig := postSign(t, ts.URL, bytes.Repeat([]byte("A"), 64))
+	// A valid commit exactly at the limit is still signed.
+	resp, sig := postSign(t, ts.URL, commit)
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("POST at limit status = %d, want 200: %s", resp.StatusCode, sig)
 	}
@@ -238,7 +248,7 @@ func TestSignInternalFailureReturns500(t *testing.T) {
 	}
 	ts := newTestHTTPServer(t, signer, "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIDummyDummyDummy", signConfig())
 
-	resp, body := postSign(t, ts.URL, []byte("payload"))
+	resp, body := postSign(t, ts.URL, validCommit(testCommitterName, testCommitterEmail, "subject\n"))
 	if resp.StatusCode != http.StatusInternalServerError {
 		t.Fatalf("POST with broken signer status = %d, want 500: %s", resp.StatusCode, body)
 	}
@@ -271,8 +281,9 @@ func TestResponsesNeverLeakPrivateKey(t *testing.T) {
 	if err != nil {
 		t.Fatalf("PublicKey: %v", err)
 	}
+	commit := validCommit(testCommitterName, testCommitterEmail, "subject\n")
 	cfg := signConfig()
-	cfg.MaxPayloadBytes = 32
+	cfg.MaxPayloadBytes = int64(len(commit))
 	ts := newTestHTTPServer(t, signer, publicKey, cfg)
 
 	assertNoKeyMaterial := func(t *testing.T, body string) {
@@ -287,10 +298,10 @@ func TestResponsesNeverLeakPrivateKey(t *testing.T) {
 		assertNoKeyMaterial(t, body)
 	}
 
-	_, sig := postSign(t, ts.URL, []byte("tree deadbeef\n\nsubject\n"))
+	_, sig := postSign(t, ts.URL, commit)
 	assertNoKeyMaterial(t, sig)
 
-	_, oversizeBody := postSign(t, ts.URL, bytes.Repeat([]byte("A"), 33))
+	_, oversizeBody := postSign(t, ts.URL, append(append([]byte(nil), commit...), 'x'))
 	assertNoKeyMaterial(t, oversizeBody)
 
 	rec := httptest.NewRecorder()

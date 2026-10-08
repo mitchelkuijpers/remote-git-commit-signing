@@ -25,13 +25,17 @@ type Server struct {
 	publicKey   string
 	maxPayload  int64
 	signTimeout time.Duration
-	logger      *slog.Logger
-	mux         *http.ServeMux
-	allowlist   Allowlist
-	limiter     *rateLimiter
-	signed      atomic.Int64
-	rejected    atomic.Int64
-	failed      atomic.Int64
+	// committerName and committerEmail are the pinned identity a commit must
+	// name to be signed.
+	committerName  string
+	committerEmail string
+	logger         *slog.Logger
+	mux            *http.ServeMux
+	allowlist      Allowlist
+	limiter        *rateLimiter
+	signed         atomic.Int64
+	rejected       atomic.Int64
+	failed         atomic.Int64
 }
 
 // New builds the HTTP handler. publicKey is the derived public signing key; it
@@ -43,13 +47,15 @@ func New(signer signing.Signer, publicKey string, cfg Config, logger *slog.Logge
 	}
 
 	s := &Server{
-		signer:      signer,
-		publicKey:   publicKey,
-		maxPayload:  cfg.MaxPayloadBytes,
-		signTimeout: cfg.SignTimeout,
-		logger:      logger,
-		allowlist:   cfg.Allowlist,
-		limiter:     newRateLimiter(cfg.RatePerMin, cfg.RateBurst),
+		signer:         signer,
+		publicKey:      publicKey,
+		maxPayload:     cfg.MaxPayloadBytes,
+		signTimeout:    cfg.SignTimeout,
+		committerName:  cfg.CommitterName,
+		committerEmail: cfg.CommitterEmail,
+		logger:         logger,
+		allowlist:      cfg.Allowlist,
+		limiter:        newRateLimiter(cfg.RatePerMin, cfg.RateBurst),
 	}
 
 	mux := http.NewServeMux()
@@ -97,10 +103,12 @@ func (s *Server) handlePublicKey(w http.ResponseWriter, _ *http.Request) {
 	writeText(w, http.StatusOK, s.publicKey)
 }
 
-// handleSign signs the request body. The body is an opaque octet-stream: this
-// slice signs whatever it is given, and commit validation lands later. The
-// authorization middleware has already enforced identity, allowlist and rate
-// limit, and owns the single audit log line for this decision.
+// handleSign signs the request body. The body must be a git commit object
+// naming the configured committer identity and must not already carry a
+// signature; anything else is refused with a distinct 4xx before it reaches
+// the signing backend. The authorization middleware has already enforced
+// identity, allowlist and rate limit, and owns the single audit log line for
+// this decision — including the rejection reason recorded here.
 func (s *Server) handleSign(w http.ResponseWriter, r *http.Request) {
 	if !s.Ready() {
 		writeText(w, http.StatusServiceUnavailable, "signing key not loaded")
@@ -109,6 +117,7 @@ func (s *Server) handleSign(w http.ResponseWriter, r *http.Request) {
 
 	// Reject early when the declared size already exceeds the limit.
 	if r.ContentLength > s.maxPayload {
+		noteRejection(r, reasonPayloadTooLarge, r.ContentLength)
 		writeText(w, http.StatusRequestEntityTooLarge, "payload too large")
 		return
 	}
@@ -119,6 +128,7 @@ func (s *Server) handleSign(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if int64(len(payload)) > s.maxPayload {
+		noteRejection(r, reasonPayloadTooLarge, -1)
 		writeText(w, http.StatusRequestEntityTooLarge, "payload too large")
 		return
 	}
@@ -130,6 +140,15 @@ func (s *Server) handleSign(w http.ResponseWriter, r *http.Request) {
 		d.payloadBytes = len(payload)
 	}
 
+	// Commit-only: the payload must be a commit object naming the configured
+	// committer and must not already carry a signature, before it reaches the
+	// signing backend.
+	if check := s.checkCommit(payload); check.status != 0 {
+		noteRejection(r, check.reason, -1)
+		writeText(w, check.status, check.message)
+		return
+	}
+
 	// Per-request signing deadline, on top of the server's own timeouts.
 	ctx, cancel := context.WithTimeout(r.Context(), s.signTimeout)
 	defer cancel()
@@ -137,6 +156,7 @@ func (s *Server) handleSign(w http.ResponseWriter, r *http.Request) {
 	sig, err := s.signer.Sign(ctx, payload)
 	if err != nil {
 		if errors.Is(err, signing.ErrPayloadTooLarge) {
+			noteRejection(r, reasonPayloadTooLarge, -1)
 			writeText(w, http.StatusRequestEntityTooLarge, "payload too large")
 			return
 		}

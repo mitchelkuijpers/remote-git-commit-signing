@@ -50,12 +50,16 @@ Additional docs (`architecture`, `exe-dev-setup`, `gitlab-setup`, `security`,
 
 ## Running the signer locally
 
-`git-signer-server` listens on port `8000` (override with `SIGNER_PORT`) and needs one
-required setting, the path to the private signing key (`SIGNER_KEY_PATH`, no default):
+`git-signer-server` listens on port `8000` (override with `SIGNER_PORT`) and needs three
+required settings with no defaults: the path to the private signing key
+(`SIGNER_KEY_PATH`) and the pinned committer identity (`SIGNER_COMMITTER_NAME`,
+`SIGNER_COMMITTER_EMAIL`) that every signed commit must name:
 
 ```bash
 ssh-keygen -t ed25519 -N '' -C git-signer -f /tmp/signing_key
-SIGNER_KEY_PATH=/tmp/signing_key SIGNER_ALLOWLIST='agent-*' go run ./cmd/git-signer-server
+SIGNER_KEY_PATH=/tmp/signing_key \
+  SIGNER_COMMITTER_NAME='Dev Eloper' SIGNER_COMMITTER_EMAIL='dev@example.com' \
+  SIGNER_ALLOWLIST='agent-*' go run ./cmd/git-signer-server
 ```
 
 ```bash
@@ -77,9 +81,15 @@ bucket; the sustained rate is `SIGNER_RATE_PER_MIN` (default 60) with a burst ca
 `SIGNER_RATE_BURST` (default 10). Every signing decision emits one structured `slog`
 JSON audit line carrying the VM, payload SHA-256, status and duration — never the payload.
 
-The API also accepts the committer identity settings `SIGNER_COMMITTER_NAME` and
-`SIGNER_COMMITTER_EMAIL`; they are parsed but not yet enforced (commit validation is a
-later slice).
+`POST /v1/sign` signs commits only. The payload is parsed structurally as a git commit
+object (headers with continuation lines, blank-line separator, message body — never
+regex-matched) and must name exactly the configured committer
+(`SIGNER_COMMITTER_NAME`/`SIGNER_COMMITTER_EMAIL`). Anything else is refused before it
+reaches the signing backend, with a distinct status: malformed payload `400`, oversized
+payload `413`, payload already carrying a `gpgsig` header `422`, and a committer other
+than the pinned identity `409`. The rejection reason is logged as metadata only (a stable
+reason code, the payload SHA-256, its size) — never the payload itself. The author's
+identity is deliberately not checked: GitLab verifies the committer.
 
 ## Running the client
 
@@ -126,7 +136,8 @@ recovery, and service operations.
 Git's `gpg.ssh.program` contract, the [spec](docs/spec.md) is ready, and the signer server's
 minimal HTTP API (`GET /` landing page, `POST /v1/sign`, `GET /v1/public-key`, `GET /healthz`, `GET /readyz`)
 is implemented on top of the `ssh-keygen` signing backend, with VM-identity authorization
-(identity header, allowlist, per-VM rate limit, audit log) on `POST /v1/sign`. The
+(identity header, allowlist, per-VM rate limit, audit log) and structural commit
+validation (pinned committer, size limit, no pre-existing `gpgsig`) on `POST /v1/sign`. The
 `git-remote-sign` client now implements the signing half of the `gpg.ssh.program` contract
 (payload forwarding, pinned-key check, local signature verification, atomic `.sig` write).
 Next: verify-path delegation and the end-to-end `git commit` flow.

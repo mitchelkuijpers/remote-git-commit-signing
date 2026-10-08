@@ -46,7 +46,10 @@ type decision struct {
 	vm            string
 	payloadSHA256 string
 	payloadBytes  int
-	err           error
+	// reason is a stable rejection-reason code (never payload bytes) set by
+	// the handler when it refuses a payload.
+	reason string
+	err    error
 }
 
 // decisionKey is the context key under which a decision is stored.
@@ -152,6 +155,9 @@ func (s *Server) recordDecision(d *decision, status int, elapsed time.Duration) 
 	}
 	if d.err != nil {
 		attrs = append(attrs, "error", d.err.Error())
+	}
+	if d.reason != "" {
+		attrs = append(attrs, "reason", d.reason)
 	}
 	s.logger.Log(context.Background(), level, "signing decision", attrs...)
 }
