@@ -80,7 +80,7 @@ later slice).
 
 ## Running the client
 
-`git-remote-sign` implements the signing half of Git's `gpg.ssh.program` contract. It is
+`git-remote-sign` implements Git's `gpg.ssh.program` contract. It is
 configured with two required environment variables and an optional timeout:
 
 ```bash
@@ -93,20 +93,81 @@ export GIT_REMOTE_SIGN_TIMEOUT=10s   # optional; default 10s
 authorized_keys line or a path to a file containing one. The key passed by Git as
 `-f`/`user.signingkey` must match it, and every signature returned by the server is
 verified locally against the pinned key before `<buffer>.sig` is written. Any failure
-exits non-zero and removes a partial `.sig`, so Git aborts the commit. Verification
-operations (`verify`, `find-principals`, `check-novalidate`) are delegated to the real
-`ssh-keygen` in a later slice and currently fail loudly with `not implemented yet`.
+exits non-zero and removes a partial `.sig`, so Git aborts the commit.
+
+Git also routes verification through the configured program. The operations
+`verify`, `find-principals` and `check-novalidate` are delegated verbatim to the real
+system `ssh-keygen` — the original arguments (including `-f`, which in verify mode is
+the allowed-signers file), stdin/stdout and exit code are preserved — so
+`git verify-commit` and `git log --show-signature` work normally with stock OpenSSH.
+Unknown operations fail loudly rather than being mishandled.
+
+## Milestone 1 local demo
+
+One command proves the whole loop on a single machine — generate a throwaway key,
+start the signer, sign an ordinary `git commit` through `git-remote-sign`, and verify
+it with stock Git:
+
+```bash
+scripts/demo-local.sh
+```
+
+Everything runs in a temporary directory. The script uses `scripts/devproxy` to stand
+in for exe.dev's authenticated peer proxy, which in production stamps the verified
+`X-Exedev-Source-Vm` identity that `POST /v1/sign` requires; the shim does exactly that
+locally. Expected tail:
+
+```text
+==> verifying the commit signature with stock Git
+Good "git" signature for demo@example.com with ED25519 key SHA256:...
+demo: OK - commit signed through the remote signer and verified locally
+```
+
+The same steps by hand:
+
+```bash
+go build -o bin ./cmd/git-signer-server ./cmd/git-remote-sign ./scripts/devproxy
+
+ssh-keygen -q -t ed25519 -N '' -C git-signer -f /tmp/demo-signing-key
+SIGNER_KEY_PATH=/tmp/demo-signing-key SIGNER_PORT=8000 \
+  SIGNER_COMMITTER_NAME="Demo Agent" SIGNER_COMMITTER_EMAIL=demo@example.com \
+  SIGNER_ALLOWLIST=local-demo-vm ./bin/git-signer-server &
+./bin/devproxy -listen 127.0.0.1:8080 -upstream http://127.0.0.1:8000 -vm local-demo-vm &
+
+export GIT_REMOTE_SIGNER_URL=http://127.0.0.1:8080
+export GIT_REMOTE_SIGNER_PUBLIC_KEY=/tmp/demo-signing-key.pub
+printf '%s %s %s\n' demo@example.com $(awk '{print $1, $2}' /tmp/demo-signing-key.pub) \
+  >/tmp/demo-allowed-signers
+
+git init demo && cd demo
+git config user.name "Demo Agent"
+git config user.email demo@example.com
+git config gpg.format ssh
+git config commit.gpgsign true
+git config gpg.ssh.program "$OLDPWD/bin/git-remote-sign"
+git config user.signingkey /tmp/demo-signing-key.pub
+git config gpg.ssh.allowedSignersFile /tmp/demo-allowed-signers
+
+echo hello > README.md && git add README.md
+git commit -m "demo: signed commit"   # signed through the remote signer
+git verify-commit HEAD                # verifies with stock ssh-keygen
+```
 
 ## Status
 
-🚧 **Milestone 1 in progress.** The [spike](docs/git-ssh-signing-interface.md) verified
-Git's `gpg.ssh.program` contract, the [spec](docs/spec.md) is ready, and the signer server's
-minimal HTTP API (`POST /v1/sign`, `GET /v1/public-key`, `GET /healthz`, `GET /readyz`)
-is implemented on top of the `ssh-keygen` signing backend, with VM-identity authorization
-(identity header, allowlist, per-VM rate limit, audit log) on `POST /v1/sign`. The
-`git-remote-sign` client now implements the signing half of the `gpg.ssh.program` contract
-(payload forwarding, pinned-key check, local signature verification, atomic `.sig` write).
-Next: verify-path delegation and the end-to-end `git commit` flow.
+✅ **Milestone 1 complete (localhost proof of concept).** The
+[spike](docs/git-ssh-signing-interface.md) verified Git's `gpg.ssh.program` contract,
+the [spec](docs/spec.md) is ready, and the signer server's HTTP API (`POST /v1/sign`,
+`GET /v1/public-key`, `GET /healthz`, `GET /readyz`) is implemented on top of the
+`ssh-keygen` signing backend, with VM-identity authorization (identity header,
+allowlist, per-VM rate limit, audit log) on `POST /v1/sign`. The `git-remote-sign`
+client implements the whole `gpg.ssh.program` contract: signing (payload forwarding,
+pinned-key check, local signature verification, atomic `.sig` write) and verbatim
+verification passthrough (`verify`, `find-principals`, `check-novalidate`) to the
+system `ssh-keygen`. A real-Git end-to-end test commits in a temporary repository
+against a locally running server and asserts `git verify-commit` exit codes (0 valid,
+1 unknown signer, 128 corrupt). Run the whole loop with
+[`scripts/demo-local.sh`](scripts/demo-local.sh).
 
 ## License
 
