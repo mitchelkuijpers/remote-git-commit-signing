@@ -143,8 +143,8 @@ func TestRunFailsWhenKeyMissing(t *testing.T) {
 	keyPath := filepath.Join(t.TempDir(), "signing_key")
 	err := run(context.Background(), envFrom(map[string]string{
 		"SIGNER_KEY_PATH":        keyPath,
-		"SIGNER_COMMITTER_NAME":  "Test Committer",
-		"SIGNER_COMMITTER_EMAIL": "test@example.com",
+		"SIGNER_COMMITTER_NAME":  "Test Signer",
+		"SIGNER_COMMITTER_EMAIL": "signer@example.com",
 	}), discardLogger())
 	if err == nil {
 		t.Fatal("expected an error when the signing key is missing")
@@ -170,8 +170,8 @@ func TestRunFailsWhenKeyPermissionsTooOpen(t *testing.T) {
 
 	err := run(context.Background(), envFrom(map[string]string{
 		"SIGNER_KEY_PATH":        keyPath,
-		"SIGNER_COMMITTER_NAME":  "Test Committer",
-		"SIGNER_COMMITTER_EMAIL": "test@example.com",
+		"SIGNER_COMMITTER_NAME":  "Test Signer",
+		"SIGNER_COMMITTER_EMAIL": "signer@example.com",
 	}), discardLogger())
 	if err == nil {
 		t.Fatal("expected an error for a world-readable signing key")
