@@ -62,6 +62,8 @@ type SSHKeygenSigner struct {
 	baseTmp  string
 }
 
+var _ Signer = (*SSHKeygenSigner)(nil)
+
 // NewSSHKeygenSigner validates cfg and returns a ready signer.
 func NewSSHKeygenSigner(cfg SSHKeygenConfig) (*SSHKeygenSigner, error) {
 	if cfg.KeyPath == "" {
