@@ -57,6 +57,7 @@ SIGNER_KEY_PATH=/tmp/signing_key go run ./cmd/git-signer-server
 ```
 
 ```bash
+curl -s http://127.0.0.1:8000/                         # landing page: public key + GitLab signing steps
 curl -s http://127.0.0.1:8000/healthz                  # liveness
 curl -s http://127.0.0.1:8000/readyz                   # readiness (503 until the key loads)
 curl -s http://127.0.0.1:8000/v1/public-key            # public signing key
@@ -72,7 +73,7 @@ later slice).
 
 🚧 **Milestone 1 in progress.** The [spike](docs/git-ssh-signing-interface.md) verified
 Git's `gpg.ssh.program` contract, the [spec](docs/spec.md) is ready, and the signer server's
-minimal HTTP API (`POST /v1/sign`, `GET /v1/public-key`, `GET /healthz`, `GET /readyz`)
+minimal HTTP API (`GET /` landing page, `POST /v1/sign`, `GET /v1/public-key`, `GET /healthz`, `GET /readyz`)
 is implemented on top of the `ssh-keygen` signing backend. Next: the `git-remote-sign`
 client and the end-to-end `git commit` flow.
 
