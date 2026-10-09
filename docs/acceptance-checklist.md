@@ -4,6 +4,29 @@
 > end-to-end that involves a real GitLab account. It **blocks production use** of
 > this project until it passes. Do not mark it complete without recorded evidence.
 
+## Agent pre-flight (2026-10-09)
+
+An agent attempted the run and verified everything that does not require human
+accounts. None of the manual boxes below are checked by this.
+
+- Release assets: locally built set verified against `checksums.txt`
+  (`sha256sum -c` OK for all 6 files). **Assets are not yet attached to the
+  `v0.1.0` GitHub release** — the exe.dev GitHub proxy only proxies
+  `/repos/OWNER/REPO/...` API paths, not the uploads endpoint, so the upload
+  needs a machine with direct GitHub access:
+  `gh release upload v0.1.0 <dir>/*` with the verified assets from the build
+  machine. Precondition 0 below tracks this.
+- Test suite: `go test ./...` green (`cmd/git-signer-server`, `deploy`,
+  `internal/client`, `internal/server`, `internal/signing`).
+- Software e2e: `scripts/demo-local.sh` passes — commit signed through
+  `git-remote-sign` → signer server (via the platform-identity shim) and
+  verified by stock Git: `Good "git" signature for demo@example.com`.
+- exe.dev peer integration: not reachable from the probing VM
+  (`integration not found or not attached`), and exe.dev CLI access requires one
+  interactive `ssh exe.dev` key registration by the human.
+
+Remaining: the human-gated steps below.
+
 Everything else is covered by automated tests (HTTP black box, signing interface,
 and a real-Git OS end-to-end). What cannot be automated is GitLab's own verifier and
 a real agent VM behind the exe.dev peer integration — that is what this checklist
@@ -11,6 +34,10 @@ exercises. Spec #1 can be closed once every box below is checked with evidence.
 
 ## Preconditions
 
+- [ ] `v0.1.0` release assets attached to the GitHub release (see *Agent
+      pre-flight* above for the blocked upload and exact command). Without them
+      the client installer must be given `GIT_REMOTE_SIGNER_BIN` pointing at a
+      locally built binary.
 - [ ] Signer VM deployed ([key-lifecycle.md](key-lifecycle.md)) and reachable at the
       peer-integration URL.
 - [ ] A disposable GitLab project available (throwaway; safe to delete afterwards).
