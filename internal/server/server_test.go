@@ -1,0 +1,340 @@
+package server_test
+
+import (
+	"bytes"
+	"context"
+	"errors"
+	"io"
+	"log/slog"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/mitchelkuijpers/remote-git-commit-signing/internal/server"
+	"github.com/mitchelkuijpers/remote-git-commit-signing/internal/signing"
+)
+
+func discardLogger() *slog.Logger {
+	return slog.New(slog.NewJSONHandler(io.Discard, nil))
+}
+
+// newTestKey generates a throwaway unencrypted ED25519 keypair in the test's
+// temporary directory and returns the private key path.
+func newTestKey(t *testing.T) string {
+	t.Helper()
+	keygen, err := exec.LookPath("ssh-keygen")
+	if err != nil {
+		t.Skip("ssh-keygen not available:", err)
+	}
+	path := filepath.Join(t.TempDir(), "id_ed25519")
+	cmd := exec.Command(keygen, "-q", "-t", "ed25519", "-N", "", "-C", "test@example.com", "-f", path)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("generate test key: %v: %s", err, out)
+	}
+	return path
+}
+
+// newSigner builds a real ssh-keygen signer over a throwaway key and returns it
+// with the matching derived public key.
+func newSigner(t *testing.T) (signing.Signer, string) {
+	t.Helper()
+	return newSignerForKey(t, newTestKey(t))
+}
+
+func newTestHTTPServer(t *testing.T, signer signing.Signer, publicKey string, cfg server.Config) *httptest.Server {
+	t.Helper()
+	ts := httptest.NewServer(server.New(signer, publicKey, cfg, discardLogger()))
+	t.Cleanup(ts.Close)
+	return ts
+}
+
+func get(t *testing.T, url string) (*http.Response, string) {
+	t.Helper()
+	resp, err := http.Get(url)
+	if err != nil {
+		t.Fatalf("GET %s: %v", url, err)
+	}
+	t.Cleanup(func() { resp.Body.Close() })
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("read body of %s: %v", url, err)
+	}
+	return resp, string(body)
+}
+
+func TestHealthzAlwaysAlive(t *testing.T) {
+	// No key and no signer configured: liveness must still succeed.
+	ts := newTestHTTPServer(t, nil, "", server.Config{})
+
+	resp, body := get(t, ts.URL+"/healthz")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("GET /healthz status = %d, want 200", resp.StatusCode)
+	}
+	if strings.TrimSpace(body) == "" {
+		t.Fatal("GET /healthz returned an empty body")
+	}
+}
+
+func TestReadyzNotReadyWithoutKey(t *testing.T) {
+	const keyPath = "/var/lib/git-signer/signing_key"
+	ts := newTestHTTPServer(t, nil, "", server.Config{KeyPath: keyPath})
+
+	resp, body := get(t, ts.URL+"/readyz")
+	if resp.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("GET /readyz without key status = %d, want 503", resp.StatusCode)
+	}
+	if strings.Contains(body, keyPath) || strings.Contains(body, "PRIVATE KEY") {
+		t.Fatalf("GET /readyz leaked key material or config: %q", body)
+	}
+}
+
+func TestReadyzReadyWithKey(t *testing.T) {
+	signer, publicKey := newSigner(t)
+	ts := newTestHTTPServer(t, signer, publicKey, signConfig())
+
+	resp, body := get(t, ts.URL+"/readyz")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("GET /readyz with key status = %d, want 200: %s", resp.StatusCode, body)
+	}
+	if strings.Contains(body, "PRIVATE KEY") {
+		t.Fatalf("GET /readyz leaked key material: %q", body)
+	}
+}
+
+func TestPublicKeyServesDerivedKey(t *testing.T) {
+	signer, publicKey := newSigner(t)
+	ts := newTestHTTPServer(t, signer, publicKey, signConfig())
+
+	resp, body := get(t, ts.URL+"/v1/public-key")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("GET /v1/public-key status = %d, want 200: %s", resp.StatusCode, body)
+	}
+	fields := strings.Fields(publicKey)
+	if len(fields) < 2 || !strings.Contains(body, fields[0]+" "+fields[1]) {
+		t.Fatalf("GET /v1/public-key body %q does not contain the derived public key %q", body, publicKey)
+	}
+	if strings.Contains(body, "PRIVATE KEY") {
+		t.Fatalf("GET /v1/public-key leaked private material: %q", body)
+	}
+}
+
+func TestPublicKeyNotServedWithoutKey(t *testing.T) {
+	ts := newTestHTTPServer(t, nil, "", server.Config{})
+
+	resp, body := get(t, ts.URL+"/v1/public-key")
+	if resp.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("GET /v1/public-key without key status = %d, want 503: %s", resp.StatusCode, body)
+	}
+}
+
+func TestSignRoundTrip(t *testing.T) {
+	signer, publicKey := newSigner(t)
+	ts := newTestHTTPServer(t, signer, publicKey, signConfig())
+
+	payload := validCommit(testCommitterName, testCommitterEmail, "subject line\n")
+
+	resp, sig := postSign(t, ts.URL, payload)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("POST /v1/sign status = %d, want 200: %s", resp.StatusCode, sig)
+	}
+	if got := resp.Header.Get("Content-Type"); got != "application/vnd.sshsig" {
+		t.Fatalf("POST /v1/sign Content-Type = %q, want application/vnd.sshsig", got)
+	}
+	if !strings.HasPrefix(sig, "-----BEGIN SSH SIGNATURE-----") {
+		t.Fatalf("POST /v1/sign body is not an SSHSIG PEM block: %q", sig)
+	}
+	if strings.Contains(sig, "PRIVATE KEY") {
+		t.Fatalf("POST /v1/sign leaked private material: %q", sig)
+	}
+
+	// Independent verification: stock ssh-keygen must accept the signature
+	// over the exact payload against the served public key.
+	verifySignature(t, publicKey, payload, sig)
+}
+
+func TestSignRefusesWithoutKey(t *testing.T) {
+	ts := newTestHTTPServer(t, nil, "", signConfig())
+
+	resp, body := postSign(t, ts.URL, []byte("payload"))
+	if resp.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("POST /v1/sign without key status = %d, want 503: %s", resp.StatusCode, body)
+	}
+}
+
+// postSign sends payload to the sign endpoint as an octet-stream, carrying the
+// identity authorized by signConfig's allowlist.
+func postSign(t *testing.T, baseURL string, payload []byte) (*http.Response, string) {
+	t.Helper()
+	return postSignAs(t, baseURL, testVM, payload)
+}
+
+// testVM is the source-VM identity carried by postSign and admitted by
+// signConfig.
+const testVM = "test-vm"
+
+// signConfig returns a server config that admits testVM to POST /v1/sign and
+// pins the committer identity. Authorization is fail-closed (ticket #7): tests
+// that exercise signing must configure an allowlist and carry an identity.
+// Commit validation (ticket #6) additionally requires the payload to name the
+// pinned committer. The rate budget is raised well above what a single test
+// needs, so only the dedicated rate-limit test observes throttling.
+func signConfig() server.Config {
+	return server.Config{
+		Allowlist:  server.Allowlist{testVM},
+		Committer:  server.Committer{Name: testCommitterName, Email: testCommitterEmail},
+		RatePerMin: server.DefaultRatePerMin,
+		RateBurst:  1000,
+	}
+}
+
+func TestSignRejectsOversizedBody(t *testing.T) {
+	signer, publicKey := newSigner(t)
+	commit := validCommit(testCommitterName, testCommitterEmail, "subject line\n")
+	cfg := signConfig()
+	cfg.MaxPayloadBytes = int64(len(commit))
+	ts := newTestHTTPServer(t, signer, publicKey, cfg)
+
+	resp, body := postSign(t, ts.URL, bytes.Repeat([]byte("A"), len(commit)+1))
+	if resp.StatusCode != http.StatusRequestEntityTooLarge {
+		t.Fatalf("POST oversized status = %d, want 413: %s", resp.StatusCode, body)
+	}
+	if strings.Contains(body, "AAAA") {
+		t.Fatalf("POST oversized body leaked payload bytes: %q", body)
+	}
+
+	// A valid commit exactly at the limit is still signed.
+	resp, sig := postSign(t, ts.URL, commit)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("POST at limit status = %d, want 200: %s", resp.StatusCode, sig)
+	}
+}
+
+func TestSignRejectsUnreadableBody(t *testing.T) {
+	signer, publicKey := newSigner(t)
+	h := server.New(signer, publicKey, signConfig(), discardLogger())
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/sign", failingReader{err: errors.New("client read failure sentinel")})
+	req.Header.Set("X-Exedev-Source-Vm", testVM)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("POST unreadable body status = %d, want 400: %s", rec.Code, rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), "client read failure sentinel") {
+		t.Fatalf("POST unreadable body echoed the read error: %q", rec.Body.String())
+	}
+}
+
+func TestSignInternalFailureReturns500(t *testing.T) {
+	keyPath := filepath.Join(t.TempDir(), "missing-key")
+	signer, err := signing.NewSSHKeygenSigner(signing.SSHKeygenConfig{KeyPath: keyPath})
+	if err != nil {
+		t.Fatalf("NewSSHKeygenSigner: %v", err)
+	}
+	ts := newTestHTTPServer(t, signer, "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIDummyDummyDummy", signConfig())
+
+	resp, body := postSign(t, ts.URL, validCommit(testCommitterName, testCommitterEmail, "subject\n"))
+	if resp.StatusCode != http.StatusInternalServerError {
+		t.Fatalf("POST with broken signer status = %d, want 500: %s", resp.StatusCode, body)
+	}
+	if strings.Contains(body, keyPath) {
+		t.Fatalf("POST signing failure leaked the key path: %q", body)
+	}
+}
+
+func TestSignRejectsWrongMethod(t *testing.T) {
+	signer, publicKey := newSigner(t)
+	ts := newTestHTTPServer(t, signer, publicKey, signConfig())
+
+	resp, _ := get(t, ts.URL+"/v1/sign")
+	if resp.StatusCode != http.StatusMethodNotAllowed {
+		t.Fatalf("GET /v1/sign status = %d, want 405", resp.StatusCode)
+	}
+}
+
+func TestResponsesNeverLeakPrivateKey(t *testing.T) {
+	keyPath := newTestKey(t)
+	privateKey, err := os.ReadFile(keyPath)
+	if err != nil {
+		t.Fatalf("read private key: %v", err)
+	}
+	signer, err := signing.NewSSHKeygenSigner(signing.SSHKeygenConfig{KeyPath: keyPath})
+	if err != nil {
+		t.Fatalf("NewSSHKeygenSigner: %v", err)
+	}
+	publicKey, err := signing.PublicKey(context.Background(), keyPath)
+	if err != nil {
+		t.Fatalf("PublicKey: %v", err)
+	}
+	commit := validCommit(testCommitterName, testCommitterEmail, "subject\n")
+	cfg := signConfig()
+	cfg.MaxPayloadBytes = int64(len(commit))
+	ts := newTestHTTPServer(t, signer, publicKey, cfg)
+
+	assertNoKeyMaterial := func(t *testing.T, body string) {
+		t.Helper()
+		if strings.Contains(body, "PRIVATE KEY") || strings.Contains(body, strings.TrimSpace(string(privateKey))) {
+			t.Fatalf("response leaked private key material: %q", body)
+		}
+	}
+
+	for _, path := range []string{"/healthz", "/readyz", "/v1/public-key"} {
+		_, body := get(t, ts.URL+path)
+		assertNoKeyMaterial(t, body)
+	}
+
+	_, sig := postSign(t, ts.URL, commit)
+	assertNoKeyMaterial(t, sig)
+
+	_, oversizeBody := postSign(t, ts.URL, append(append([]byte(nil), commit...), 'x'))
+	assertNoKeyMaterial(t, oversizeBody)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/v1/sign", failingReader{err: errors.New("boom")})
+	req.Header.Set("X-Exedev-Source-Vm", testVM)
+	server.New(signer, publicKey, signConfig(), discardLogger()).ServeHTTP(rec, req)
+	assertNoKeyMaterial(t, rec.Body.String())
+}
+
+// failingReader fails immediately, simulating a request body that cannot be
+// read.
+type failingReader struct{ err error }
+
+func (r failingReader) Read([]byte) (int, error) { return 0, r.err }
+
+// verifySignature asserts that stock ssh-keygen verifies sig over payload in
+// the git namespace against publicKeyLine.
+func verifySignature(t *testing.T, publicKeyLine string, payload []byte, sig string) {
+	t.Helper()
+	keygen, err := exec.LookPath("ssh-keygen")
+	if err != nil {
+		t.Skip("ssh-keygen not available:", err)
+	}
+	dir := t.TempDir()
+
+	sigPath := filepath.Join(dir, "payload.sig")
+	if err := os.WriteFile(sigPath, []byte(sig), 0o600); err != nil {
+		t.Fatalf("write signature: %v", err)
+	}
+
+	// Build an allowed-signers file from the public key the server served.
+	fields := strings.Fields(publicKeyLine)
+	if len(fields) < 2 {
+		t.Fatalf("public key line %q is malformed", publicKeyLine)
+	}
+	allowed := filepath.Join(dir, "allowed_signers")
+	if err := os.WriteFile(allowed, []byte("signer-test "+fields[0]+" "+fields[1]+"\n"), 0o600); err != nil {
+		t.Fatalf("write allowed signers: %v", err)
+	}
+
+	cmd := exec.Command(keygen, "-Y", "verify", "-n", "git", "-f", allowed, "-I", "signer-test", "-s", sigPath)
+	cmd.Stdin = bytes.NewReader(payload)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("ssh-keygen -Y verify rejected signature: %v: %s", err, out)
+	}
+}

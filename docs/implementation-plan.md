@@ -1,9 +1,10 @@
 # Implementation Plan: Remote Git Commit Signing for exe.dev Agents
 
-> **Status:** Proposed — not yet implemented.
-> This document captures the agreed direction, architecture, and constraints for the
-> project. See the [README](../README.md) for the project overview and
-> [`docs/`](./) for supporting documentation as it lands.
+> **Status:** Implemented (v0.1.0). This document is the original agreed plan, kept for
+> the record; what is actually built is described in the [architecture](architecture.md)
+> and the rest of the current documentation set linked from the [README](../README.md).
+> The one remaining gate is the [manual GitLab acceptance
+> checklist](acceptance-checklist.md).
 
 **Goal:** Build a lightweight, secure, centralized Git commit-signing service that allows
 dozens of short-lived exe.dev VMs to create SSH-signed commits attributed to your personal
@@ -556,6 +557,7 @@ Each signing request should log:
 {
   "event": "commit_signed",
   "vm": "agent-123",
+  "request_id": "3f9c…",
   "status": "success",
   "duration_ms": 12
 }
