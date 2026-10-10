@@ -90,6 +90,31 @@ Because the author identity is deliberately not checked (GitLab verifies the
 committer only), a VM can also set an arbitrary *author* while the committer stays
 pinned. Do not treat the author field as trustworthy either.
 
+A deployment that wants tag/VM attachment to be the only gate can set
+`SIGNER_ALLOWLIST=*`: the mechanism stays in place but matches every VM. The
+tradeoff is that any VM ever granted the integration — including an old tagged
+VM you forgot about — can sign commits under the pinned identity. Audit logging
+still traces every signature to the calling VM.
+
+## Client bootstrap endpoints
+
+`GET /`, `GET /v1/public-key`, `GET /install.sh`, and `GET /v1/client/...` are
+unauthenticated, like the landing page: they expose no key material, only the
+public key and already-public configuration. On exe.dev the service's web port
+is reachable only through your own account (edge-authenticated or the peer
+integration), so the audience is account-scoped.
+
+- `GET /install.sh` renders the pinned committer identity (name and email) into
+  the bootstrap script — the same identity stamped on every public commit.
+- `GET /v1/client/...` serves the client binaries and installer over the same
+  channel the design already trusts for signing: a network position that could
+  tamper with those downloads could already substitute commit payloads
+  mid-sign. The installer additionally cross-checks the pinned key against the
+  signer's `/v1/public-key` before installing anything.
+- The file endpoint serves a fixed whitelist of names from `SIGNER_DIST_DIR`;
+  no other files in that directory are exposed, and the URL name is never
+  spliced into a filesystem path.
+
 ## What the pinned client key protects against
 
 `GIT_REMOTE_SIGNER_PUBLIC_KEY` is the client's independent source of truth:

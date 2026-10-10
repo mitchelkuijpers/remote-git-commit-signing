@@ -32,7 +32,14 @@ const (
 	envAllowlist      = "SIGNER_ALLOWLIST"
 	envRatePerMin     = "SIGNER_RATE_PER_MIN"
 	envRateBurst      = "SIGNER_RATE_BURST"
+	envDistDir        = "SIGNER_DIST_DIR"
+	envPublicURL      = "SIGNER_PUBLIC_URL"
 )
+
+// DefaultPublicURL is the signer base URL rendered into the client bootstrap
+// script when SIGNER_PUBLIC_URL is unset: the canonical exe.dev
+// peer-integration hostname.
+const DefaultPublicURL = "http://git-signer.int.exe.xyz"
 
 // Committer is the pinned Git committer identity a commit must name to be
 // signed. Both fields are required with no default.
@@ -73,6 +80,17 @@ type Config struct {
 	// RateBurst is the per-VM token bucket capacity, i.e. the largest burst of
 	// signing requests admitted at once. Defaults to DefaultRateBurst.
 	RateBurst int
+	// DistDir is the directory the client-distribution endpoints serve
+	// (git-remote-sign builds and install-client.sh). Empty disables those
+	// endpoints: GET /v1/client/... answers 404. GET /install.sh is served
+	// regardless.
+	DistDir string
+	// PublicURL is the signer base URL rendered into the client bootstrap
+	// script (GET /install.sh) and shown on the landing page. It must be the
+	// exe.dev peer-integration URL, not a direct VM URL: only the peer
+	// integration delivers the verified caller identity POST /v1/sign needs.
+	// Defaults to DefaultPublicURL.
+	PublicURL string
 }
 
 // LoadConfig reads configuration through getenv (normally os.Getenv). It
@@ -87,6 +105,8 @@ func LoadConfig(getenv func(string) string) (Config, error) {
 		},
 		RatePerMin: DefaultRatePerMin,
 		RateBurst:  DefaultRateBurst,
+		DistDir:    getenv(envDistDir),
+		PublicURL:  DefaultPublicURL,
 	}
 
 	if cfg.KeyPath == "" {
@@ -112,6 +132,10 @@ func LoadConfig(getenv func(string) string) (Config, error) {
 	}
 
 	cfg.Allowlist = parseAllowlist(getenv(envAllowlist))
+
+	if raw := getenv(envPublicURL); raw != "" {
+		cfg.PublicURL = raw
+	}
 
 	if raw := getenv(envRatePerMin); raw != "" {
 		rate, err := parsePositiveInt(envRatePerMin, raw)
@@ -158,6 +182,10 @@ func (c Config) withDefaults() Config {
 	if c.Port <= 0 {
 		c.Port = DefaultPort
 	}
+	if c.PublicURL == "" {
+		c.PublicURL = DefaultPublicURL
+	}
+	c.PublicURL = strings.TrimRight(c.PublicURL, "/")
 	if c.MaxPayloadBytes <= 0 {
 		c.MaxPayloadBytes = signing.DefaultMaxPayloadBytes
 	}

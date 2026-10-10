@@ -15,7 +15,8 @@ accounts. None of the manual boxes below are checked by this.
   `/repos/OWNER/REPO/...` API paths, not the uploads endpoint, so the upload
   needs a machine with direct GitHub access:
   `gh release upload v0.1.0 <dir>/*` with the verified assets from the build
-  machine. Precondition 0 below tracks this.
+  machine. No longer a gate: the signer serves the client itself (see
+  preconditions).
 - Test suite: `go test ./...` green (`cmd/git-signer-server`, `deploy`,
   `internal/client`, `internal/server`, `internal/signing`).
 - Software e2e: `scripts/demo-local.sh` passes — commit signed through
@@ -34,12 +35,10 @@ exercises. Spec #1 can be closed once every box below is checked with evidence.
 
 ## Preconditions
 
-- [ ] `v0.1.0` release assets attached to the GitHub release (see *Agent
-      pre-flight* above for the blocked upload and exact command). Without them
-      the client installer must be given `GIT_REMOTE_SIGNER_BIN` pointing at a
-      locally built binary.
 - [ ] Signer VM deployed ([key-lifecycle.md](key-lifecycle.md)) and reachable at the
-      peer-integration URL.
+      peer-integration URL. The client binary comes from the signer's own
+      `/v1/client/...` endpoints, so the GitHub release assets are optional
+      (archival parity; see *Agent pre-flight* above for the blocked upload).
 - [ ] A disposable GitLab project available (throwaway; safe to delete afterwards).
 - [ ] A fresh agent VM available, not yet provisioned.
 - [ ] `git`, `ssh-keygen`, and `curl` present on the agent VM.
@@ -79,15 +78,12 @@ Outcome: <!-- TODO: pass/fail + notes -->
 
 ### 3. Provision a real agent VM with the installer
 
-Action: attach the peer integration to the VM (a `agent` tag, or a direct
-attachment; see [exe-dev-setup.md](exe-dev-setup.md)), then run:
+Action: attach the peer integration to the VM (an `agent` tag, or a direct
+attachment; see [exe-dev-setup.md](exe-dev-setup.md)), then run the signer-served
+bootstrap:
 
 ```bash
-GIT_REMOTE_SIGNER_URL=http://git-signer.int.exe.xyz \
-GIT_REMOTE_SIGNER_PUBLIC_KEY=/var/lib/git-signer/signing_key.pub \
-GIT_SIGNER_COMMITTER_NAME='<name>' \
-GIT_SIGNER_COMMITTER_EMAIL='<verified email>' \
-  deploy/install-client.sh
+curl -fsSL http://git-signer.int.exe.xyz/install.sh | sh
 ```
 
 Expected: the installer reaches the signer, cross-checks the pinned key, installs

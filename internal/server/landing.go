@@ -40,6 +40,18 @@ key to have those commits show as verified.
 <pre>{{.PublicKey}}</pre>
 <p>Fingerprint (SHA256): <code>{{.Fingerprint}}</code></p>
 
+<h2>Set up an agent VM</h2>
+<p>
+On any VM attached to the signer&rsquo;s peer integration, provision the client
+with one command (idempotent, safe to re-run):
+</p>
+<pre>curl -fsSL {{.PublicURL}}/install.sh | sh</pre>
+<p>
+The script downloads the client and installer from this signer and configures
+Git to sign every commit through it. No private key is ever stored on the
+VM.
+</p>
+
 <h2>Register with GitLab</h2>
 <ol>
 <li>Sign in to GitLab and open your avatar &rarr; <em>Edit profile</em>
@@ -61,9 +73,9 @@ commit with <code>git verify-commit &lt;commit&gt;</code>.
 </html>
 `))
 
-// handleLandingPage serves the read-only HTML landing page. It exposes only the
-// public key and its fingerprint: never the key path, environment, or any other
-// configuration.
+// handleLandingPage serves the read-only HTML landing page. It exposes only
+// public information — the public key, its fingerprint, and the public
+// bootstrap URL: never the key path, environment, or any other configuration.
 func (s *Server) handleLandingPage(w http.ResponseWriter, _ *http.Request) {
 	if !s.Ready() {
 		writeText(w, http.StatusServiceUnavailable, "signing key not loaded")
@@ -84,7 +96,8 @@ func (s *Server) handleLandingPage(w http.ResponseWriter, _ *http.Request) {
 	if err := landingTemplate.Execute(w, struct {
 		PublicKey   string
 		Fingerprint string
-	}{PublicKey: strings.TrimSpace(s.publicKey), Fingerprint: fingerprint}); err != nil {
+		PublicURL   string
+	}{PublicKey: strings.TrimSpace(s.publicKey), Fingerprint: fingerprint, PublicURL: s.publicURL}); err != nil {
 		// The header is already written; only the log can record the failure.
 		s.logger.Error("landing page rendering failed",
 			"event", "landing_page", "status", "template_failed", "error", err.Error())

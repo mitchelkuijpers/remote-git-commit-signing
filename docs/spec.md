@@ -76,7 +76,7 @@ unsigned fallbacks.
 
 ### Agent provisioning
 
-21. As the developer, I want a single idempotent install command for fresh agent VMs, so that spinning up a new VM takes seconds and is safe to re-run.
+21. As the developer, I want a single idempotent install command for fresh agent VMs, so that spinning up a new VM takes seconds and is safe to re-run. The signer serves this as a one-line bootstrap (`curl <signer>/install.sh | sh`) that downloads the client binary and the tested installer from the signer itself, so a fresh VM needs nothing pre-staged.
 22. As the developer, I want installing to require no Nix/Docker/runtime and no unverified downloads, so that it works on minimal agent images safely.
 23. As the developer, I want the trusted public key pinned/validated on the client (never blindly fetched), so that a hostile or misconfigured server cannot substitute keys.
 24. As the developer, I want the install to run a harmless self-test signing round-trip, so that misconfiguration is caught before real work starts — without pushing anything anywhere.
