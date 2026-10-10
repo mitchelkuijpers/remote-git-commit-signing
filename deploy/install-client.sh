@@ -29,14 +29,14 @@
 # Usage: deploy/install-client.sh [--skip-selftest]
 #
 # Required environment:
-#   GIT_REMOTE_SIGNER_URL          signer base URL. In production this is the
+#   SIGNER_URL          signer base URL. In production this is the
 #                                  exe.dev peer-integration URL; the platform
 #                                  proxy stamps the verified source-VM identity
 #                                  that POST /v1/sign requires.
-#   GIT_REMOTE_SIGNER_PUBLIC_KEY   pinned public key: a literal authorized_keys
+#   SIGNER_PUBLIC_KEY   pinned public key: a literal authorized_keys
 #                                  line, or a path to a file containing one.
-#   GIT_SIGNER_COMMITTER_NAME      developer name written to git user.name
-#   GIT_SIGNER_COMMITTER_EMAIL     developer email written to git user.email
+#   SIGNER_COMMITTER_NAME      developer name written to git user.name
+#   SIGNER_COMMITTER_EMAIL     developer email written to git user.email
 #
 # Optional environment:
 #   GIT_REMOTE_SIGNER_BIN          local git-remote-sign binary to install
@@ -49,7 +49,7 @@
 #                                  $XDG_CONFIG_HOME/git-remote-signer)
 #   GIT_REMOTE_SIGNER_PROFILE      login profile that sources <config>/env
 #                                  (default: $HOME/.profile)
-#   GIT_REMOTE_SIGN_TIMEOUT        optional client timeout persisted to env
+#   SIGNER_TIMEOUT        optional client timeout persisted to env
 #
 # Release artifact layout. Releases are produced in a later milestone; for tag
 # vX.Y.Z the installer expects, under <download_base>/vX.Y.Z/:
@@ -67,15 +67,15 @@ umask 022
 
 BIN_NAME=git-remote-sign
 
-url=${GIT_REMOTE_SIGNER_URL:-}
-pinned_input=${GIT_REMOTE_SIGNER_PUBLIC_KEY:-}
-dev_name=${GIT_SIGNER_COMMITTER_NAME:-}
-dev_email=${GIT_SIGNER_COMMITTER_EMAIL:-}
+url=${SIGNER_URL:-}
+pinned_input=${SIGNER_PUBLIC_KEY:-}
+dev_name=${SIGNER_COMMITTER_NAME:-}
+dev_email=${SIGNER_COMMITTER_EMAIL:-}
 
 local_bin=${GIT_REMOTE_SIGNER_BIN:-}
 release_version=${GIT_REMOTE_SIGNER_RELEASE_VERSION:-v0.1.0}
 download_base=${GIT_REMOTE_SIGNER_DOWNLOAD_BASE:-https://github.com/mitchelkuijpers/remote-git-commit-signing/releases/download}
-timeout=${GIT_REMOTE_SIGN_TIMEOUT:-}
+timeout=${SIGNER_TIMEOUT:-}
 
 home=${HOME:-}
 if [ -z "$home" ]; then
@@ -157,16 +157,16 @@ need awk
 need sed
 need mktemp
 
-[ -n "$url" ] || die "GIT_REMOTE_SIGNER_URL is required (the signer base URL, e.g. the exe.dev peer-integration URL)."
+[ -n "$url" ] || die "SIGNER_URL is required (the signer base URL, e.g. the exe.dev peer-integration URL)."
 case $url in
 http://* | https://*) ;;
-*) die "GIT_REMOTE_SIGNER_URL must start with http:// or https:// (got: $url)." ;;
+*) die "SIGNER_URL must start with http:// or https:// (got: $url)." ;;
 esac
 url=${url%/}
 
-[ -n "$pinned_input" ] || die "GIT_REMOTE_SIGNER_PUBLIC_KEY is required (a pinned public key line, or a path to a file containing one)."
-[ -n "$dev_name" ] || die "GIT_SIGNER_COMMITTER_NAME is required (the developer name for git user.name)."
-[ -n "$dev_email" ] || die "GIT_SIGNER_COMMITTER_EMAIL is required (the developer email for git user.email)."
+[ -n "$pinned_input" ] || die "SIGNER_PUBLIC_KEY is required (a pinned public key line, or a path to a file containing one)."
+[ -n "$dev_name" ] || die "SIGNER_COMMITTER_NAME is required (the developer name for git user.name)."
+[ -n "$dev_email" ] || die "SIGNER_COMMITTER_EMAIL is required (the developer email for git user.email)."
 
 WORK=$(mktemp -d "${TMPDIR:-/tmp}/install-client.XXXXXX") ||
 	die "cannot create a temporary directory (set TMPDIR to a writable directory)."
@@ -175,15 +175,15 @@ trap 'rm -rf "$WORK"' EXIT INT TERM
 # 2. Resolve and validate the pinned public key.
 if [ -f "$pinned_input" ]; then
 	cp "$pinned_input" "$WORK/pinned.raw" ||
-		die "cannot read GIT_REMOTE_SIGNER_PUBLIC_KEY file: $pinned_input"
+		die "cannot read SIGNER_PUBLIC_KEY file: $pinned_input"
 else
 	printf '%s\n' "$pinned_input" >"$WORK/pinned.raw"
 fi
 awk 'NF >= 2 { print; exit }' "$WORK/pinned.raw" >"$WORK/pinned.line"
 [ -s "$WORK/pinned.line" ] ||
-	die "GIT_REMOTE_SIGNER_PUBLIC_KEY is neither a readable file nor a public key line: $pinned_input"
+	die "SIGNER_PUBLIC_KEY is neither a readable file nor a public key line: $pinned_input"
 if ! ssh-keygen -lf "$WORK/pinned.line" >/dev/null 2>&1; then
-	die "GIT_REMOTE_SIGNER_PUBLIC_KEY does not contain a valid OpenSSH public key: $pinned_input"
+	die "SIGNER_PUBLIC_KEY does not contain a valid OpenSSH public key: $pinned_input"
 fi
 awk 'NF >= 2 { print $1 " " $2; exit }' "$WORK/pinned.line" >"$WORK/pinned.id"
 
@@ -194,7 +194,7 @@ awk 'NF >= 2 { print $1 " " $2; exit }' "$WORK/pinned.line" >"$WORK/pinned.id"
 # final key content, so following a hostile redirect can only fail closed.
 echo "==> checking signer reachability at $url/healthz" >&2
 if ! curl -fsSL --max-time 10 "$url/healthz" >/dev/null 2>&1; then
-	die "signer is not reachable at $url (GET /healthz failed). Check GIT_REMOTE_SIGNER_URL, that the signer VM is running, and that the exe.dev peer integration is attached to this VM."
+	die "signer is not reachable at $url (GET /healthz failed). Check SIGNER_URL, that the signer VM is running, and that the exe.dev peer integration is attached to this VM."
 fi
 
 echo "==> cross-checking the pinned key against $url/v1/public-key" >&2
@@ -329,10 +329,10 @@ env_src=$WORK/env.content
 {
 	printf '%s\n' "# Managed by deploy/install-client.sh; re-running the installer"
 	printf '%s\n' "# rewrites this file. It configures git-remote-sign (no key material)."
-	printf 'export GIT_REMOTE_SIGNER_URL=%s\n' "$(quote "$url")"
-	printf 'export GIT_REMOTE_SIGNER_PUBLIC_KEY=%s\n' "$(quote "$pubkey_path")"
+	printf 'export SIGNER_URL=%s\n' "$(quote "$url")"
+	printf 'export SIGNER_PUBLIC_KEY=%s\n' "$(quote "$pubkey_path")"
 	if [ -n "$timeout" ]; then
-		printf 'export GIT_REMOTE_SIGN_TIMEOUT=%s\n' "$(quote "$timeout")"
+		printf 'export SIGNER_TIMEOUT=%s\n' "$(quote "$timeout")"
 	fi
 } >"$env_src" || die "cannot write $env_src"
 stage_and_mv "$env_src" "$env_file" 0644
@@ -387,12 +387,12 @@ selftest() {
 	# global config, exercising the real provisioning end to end.
 	printf 'self-test\n' >"$repo/README.md"
 	git -C "$repo" add README.md
-	if ! GIT_REMOTE_SIGNER_URL="$url" GIT_REMOTE_SIGNER_PUBLIC_KEY="$pubkey_path" \
+	if ! SIGNER_URL="$url" SIGNER_PUBLIC_KEY="$pubkey_path" \
 		git -C "$repo" commit -q -m "selftest: remote signing round-trip" >"$st/commit.out" 2>&1; then
 		cat "$st/commit.out" >&2
-		die "self-test commit failed. The signer is reachable, so check that GIT_REMOTE_SIGNER_URL is the platform URL that injects the verified VM identity for POST /v1/sign, that this VM is in SIGNER_ALLOWLIST, and that the committer identity matches SIGNER_COMMITTER_NAME/EMAIL."
+		die "self-test commit failed. The signer is reachable, so check that SIGNER_URL is the platform URL that injects the verified VM identity for POST /v1/sign, that this VM is in SIGNER_ALLOWLIST, and that the committer identity matches SIGNER_COMMITTER_NAME/EMAIL."
 	fi
-	if ! GIT_REMOTE_SIGNER_URL="$url" GIT_REMOTE_SIGNER_PUBLIC_KEY="$pubkey_path" \
+	if ! SIGNER_URL="$url" SIGNER_PUBLIC_KEY="$pubkey_path" \
 		git -C "$repo" verify-commit HEAD >"$st/verify.out" 2>&1; then
 		cat "$st/verify.out" >&2
 		die "self-test signature did not verify against the pinned key."

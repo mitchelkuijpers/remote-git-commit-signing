@@ -32,9 +32,9 @@ Group=git-signer
 #   SIGNER_DIST_DIR           optional   directory the server serves client
 #                                        downloads from (unset disables
 #                                        /install.sh and /v1/client/...)
-#   SIGNER_PUBLIC_URL         optional   signer base URL rendered into the
+#   SIGNER_URL                optional   signer base URL rendered into the
 #                                        client bootstrap script (default
-#                                        http://git-signer.int.exe.xyz)
+#                                        https://git-signer.int.exe.xyz)
 EnvironmentFile=-/etc/git-signer/git-signer.env
 Environment=SIGNER_KEY_PATH=/var/lib/git-signer/signing_key
 
