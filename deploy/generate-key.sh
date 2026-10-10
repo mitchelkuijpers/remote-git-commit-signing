@@ -15,20 +15,20 @@
 #
 set -eu
 
-KEY_DIR=${GIT_SIGNER_KEY_DIR:-/var/lib/git-signer}
-KEY_NAME=${GIT_SIGNER_KEY_NAME:-signing_key}
-KEY_USER=${GIT_SIGNER_USER:-git-signer}
-KEY_GROUP=${GIT_SIGNER_GROUP:-$KEY_USER}
-KEY_COMMENT=${GIT_SIGNER_KEY_COMMENT:-git-signer remote signing key}
+KEY_DIR=${SIGNER_KEY_DIR:-/var/lib/git-signer}
+KEY_NAME=${SIGNER_KEY_NAME:-signing_key}
+KEY_USER=${SIGNER_USER:-git-signer}
+KEY_GROUP=${SIGNER_GROUP:-$KEY_USER}
+KEY_COMMENT=${SIGNER_KEY_COMMENT:-git-signer remote signing key}
 
 KEY_PATH=$KEY_DIR/$KEY_NAME
 PUB_PATH=$KEY_PATH.pub
 
 force=0
 chown_owner=1
-# GIT_SIGNER_SKIP_CHOWN=1 is for local/testing use only: it generates a key
+# SIGNER_SKIP_CHOWN=1 is for local/testing use only: it generates a key
 # owned by the invoking user instead of the service account.
-if [ "${GIT_SIGNER_SKIP_CHOWN:-0}" = 1 ]; then
+if [ "${SIGNER_SKIP_CHOWN:-0}" = 1 ]; then
 	chown_owner=0
 fi
 
@@ -43,12 +43,12 @@ Options:
   -h, --help    show this help
 
 Environment:
-  GIT_SIGNER_KEY_DIR     key directory (default: /var/lib/git-signer)
-  GIT_SIGNER_KEY_NAME    key file name (default: signing_key)
-  GIT_SIGNER_USER        owning user (default: git-signer)
-  GIT_SIGNER_GROUP       owning group (default: same as user)
-  GIT_SIGNER_KEY_COMMENT comment stored in the public key
-  GIT_SIGNER_SKIP_CHOWN  if 1, do not change ownership (local testing only)
+  SIGNER_KEY_DIR     key directory (default: /var/lib/git-signer)
+  SIGNER_KEY_NAME    key file name (default: signing_key)
+  SIGNER_USER        owning user (default: git-signer)
+  SIGNER_GROUP       owning group (default: same as user)
+  SIGNER_KEY_COMMENT comment stored in the public key
+  SIGNER_SKIP_CHOWN  if 1, do not change ownership (local testing only)
 EOF
 }
 
@@ -72,7 +72,7 @@ done
 
 if [ "$(id -u)" -ne 0 ] && [ "$chown_owner" -eq 1 ]; then
 	echo "error: generate-key.sh must run as root: it creates $KEY_DIR and sets ownership to $KEY_USER." >&2
-	echo "       Re-run with sudo, or set GIT_SIGNER_SKIP_CHOWN=1 for a local, unowned key." >&2
+	echo "       Re-run with sudo, or set SIGNER_SKIP_CHOWN=1 for a local, unowned key." >&2
 	exit 1
 fi
 

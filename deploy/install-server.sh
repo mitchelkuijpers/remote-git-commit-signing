@@ -15,48 +15,48 @@
 # Usage: sudo deploy/install-server.sh [--no-start] [--skip-key]
 #
 # Environment:
-#   GIT_SIGNER_USER            service account      (default: git-signer)
-#   GIT_SIGNER_GROUP           service group        (default: same as user)
-#   GIT_SIGNER_KEY_DIR         key directory        (default: /var/lib/git-signer)
-#   GIT_SIGNER_KEY_NAME        key file name        (default: signing_key)
-#   GIT_SIGNER_CONF_DIR        env-file directory   (default: /etc/git-signer)
-#   GIT_SIGNER_COMMITTER_NAME  committer name written to the env file (required)
-#   GIT_SIGNER_COMMITTER_EMAIL committer email written to the env file (required)
-#   GIT_SIGNER_ALLOWLIST       VM identities allowed to sign, comma-separated
+#   SIGNER_USER            service account      (default: git-signer)
+#   SIGNER_GROUP           service group        (default: same as user)
+#   SIGNER_KEY_DIR         key directory        (default: /var/lib/git-signer)
+#   SIGNER_KEY_NAME        key file name        (default: signing_key)
+#   SIGNER_CONF_DIR        env-file directory   (default: /etc/git-signer)
+#   SIGNER_COMMITTER_NAME  committer name written to the env file (required)
+#   SIGNER_COMMITTER_EMAIL committer email written to the env file (required)
+#   SIGNER_ALLOWLIST       VM identities allowed to sign, comma-separated
 #                              exact names or globs (required; empty denies all)
-#   GIT_SIGNER_PORT            listen port written to the env file (default 8000)
-#   GIT_SIGNER_RATE_PER_MIN    sustained per-VM signing rate (default: server's)
-#   GIT_SIGNER_RATE_BURST      per-VM burst capacity (default: server's)
-#   GIT_SIGNER_DIST_DIR        directory the server serves client downloads
+#   SIGNER_PORT            listen port written to the env file (default 8000)
+#   SIGNER_RATE_PER_MIN    sustained per-VM signing rate (default: server's)
+#   SIGNER_RATE_BURST      per-VM burst capacity (default: server's)
+#   SIGNER_DIST_DIR        directory the server serves client downloads
 #                              from (default: /usr/local/lib/git-signer/dist);
-#                              client binaries are built from GIT_SIGNER_REPO_DIR
-#   GIT_SIGNER_SKIP_DIST       set to 1 to skip building/installing the client
+#                              client binaries are built from SIGNER_REPO_DIR
+#   SIGNER_SKIP_DIST       set to 1 to skip building/installing the client
 #                              dist (disables /install.sh and /v1/client/...)
-#   GIT_SIGNER_SERVER_BIN      prebuilt server binary to install
-#   GIT_SIGNER_REPO_DIR        source tree used to build the binary
+#   SIGNER_SERVER_BIN      prebuilt server binary to install
+#   SIGNER_REPO_DIR        source tree used to build the binary
 #   DESTDIR                    staging root; staged installs skip user
 #                              creation, chown, and systemctl so they can run
 #                              without root (for packaging/image builds)
 #
-# If GIT_SIGNER_CONF_DIR is changed, update EnvironmentFile= in the unit too.
+# If SIGNER_CONF_DIR is changed, update EnvironmentFile= in the unit too.
 #
 set -eu
 
 SCRIPT_DIR=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
-REPO_DIR=${GIT_SIGNER_REPO_DIR:-$(CDPATH='' cd -- "$SCRIPT_DIR/.." && pwd)}
+REPO_DIR=${SIGNER_REPO_DIR:-$(CDPATH='' cd -- "$SCRIPT_DIR/.." && pwd)}
 
-SIGNER_USER=${GIT_SIGNER_USER:-git-signer}
-SIGNER_GROUP=${GIT_SIGNER_GROUP:-$SIGNER_USER}
-KEY_DIR=${GIT_SIGNER_KEY_DIR:-/var/lib/git-signer}
-KEY_NAME=${GIT_SIGNER_KEY_NAME:-signing_key}
-CONF_DIR=${GIT_SIGNER_CONF_DIR:-/etc/git-signer}
+SIGNER_USER=${SIGNER_USER:-git-signer}
+SIGNER_GROUP=${SIGNER_GROUP:-$SIGNER_USER}
+KEY_DIR=${SIGNER_KEY_DIR:-/var/lib/git-signer}
+KEY_NAME=${SIGNER_KEY_NAME:-signing_key}
+CONF_DIR=${SIGNER_CONF_DIR:-/etc/git-signer}
 DESTDIR=${DESTDIR:-}
 
 BIN_NAME=git-signer-server
 UNIT_NAME=git-signer.service
 CLIENT_BIN_NAME=git-remote-sign
-DIST_DIR=${GIT_SIGNER_DIST_DIR:-/usr/local/lib/git-signer/dist}
-skip_dist=${GIT_SIGNER_SKIP_DIST:-0}
+DIST_DIR=${SIGNER_DIST_DIR:-/usr/local/lib/git-signer/dist}
+skip_dist=${SIGNER_SKIP_DIST:-0}
 
 cfg_key_path=$KEY_DIR/$KEY_NAME
 cfg_dist_dir=$DIST_DIR
@@ -144,21 +144,21 @@ fi
 # skip this so images can be built before the values are known.
 if [ "$staging" -eq 0 ]; then
 	missing=
-	if [ -z "${GIT_SIGNER_COMMITTER_NAME:-}" ]; then missing="$missing GIT_SIGNER_COMMITTER_NAME"; fi
-	if [ -z "${GIT_SIGNER_COMMITTER_EMAIL:-}" ]; then missing="$missing GIT_SIGNER_COMMITTER_EMAIL"; fi
-	if [ -z "${GIT_SIGNER_ALLOWLIST:-}" ]; then missing="$missing GIT_SIGNER_ALLOWLIST"; fi
+	if [ -z "${SIGNER_COMMITTER_NAME:-}" ]; then missing="$missing SIGNER_COMMITTER_NAME"; fi
+	if [ -z "${SIGNER_COMMITTER_EMAIL:-}" ]; then missing="$missing SIGNER_COMMITTER_EMAIL"; fi
+	if [ -z "${SIGNER_ALLOWLIST:-}" ]; then missing="$missing SIGNER_ALLOWLIST"; fi
 	if [ -n "$missing" ]; then
 		echo "error: missing required configuration:$missing" >&2
 		echo "       Re-run, for example:" >&2
-		echo "         sudo env GIT_SIGNER_COMMITTER_NAME='Your Name' \\" >&2
-		echo "           GIT_SIGNER_COMMITTER_EMAIL='you@example.com' \\" >&2
-		echo "           GIT_SIGNER_ALLOWLIST='agent-*' deploy/install-server.sh" >&2
+		echo "         sudo env SIGNER_COMMITTER_NAME='Your Name' \\" >&2
+		echo "           SIGNER_COMMITTER_EMAIL='you@example.com' \\" >&2
+		echo "           SIGNER_ALLOWLIST='agent-*' deploy/install-server.sh" >&2
 		echo "       (SIGNER_ALLOWLIST is fail-closed: an empty value admits nobody.)" >&2
 		exit 1
 	fi
 fi
 
-unit_src=${GIT_SIGNER_UNIT_FILE:-$SCRIPT_DIR/$UNIT_NAME}
+unit_src=${SIGNER_UNIT_FILE:-$SCRIPT_DIR/$UNIT_NAME}
 if [ ! -f "$unit_src" ]; then
 	echo "error: systemd unit not found: $unit_src" >&2
 	exit 1
@@ -169,12 +169,12 @@ fi
 # not removed by the subshell that command substitution would create.
 bin_src=
 resolve_binary() {
-	if [ -n "${GIT_SIGNER_SERVER_BIN:-}" ]; then
-		if [ -x "$GIT_SIGNER_SERVER_BIN" ]; then
-			bin_src=$GIT_SIGNER_SERVER_BIN
+	if [ -n "${SIGNER_SERVER_BIN:-}" ]; then
+		if [ -x "$SIGNER_SERVER_BIN" ]; then
+			bin_src=$SIGNER_SERVER_BIN
 			return 0
 		fi
-		echo "error: GIT_SIGNER_SERVER_BIN is not an executable file: $GIT_SIGNER_SERVER_BIN" >&2
+		echo "error: SIGNER_SERVER_BIN is not an executable file: $SIGNER_SERVER_BIN" >&2
 		return 1
 	fi
 	for candidate in "$SCRIPT_DIR/$BIN_NAME" "$REPO_DIR/$BIN_NAME"; do
@@ -193,7 +193,7 @@ resolve_binary() {
 		return 1
 	fi
 	echo "error: cannot find the $BIN_NAME binary." >&2
-	echo "       Build it with 'go build -o $BIN_NAME ./cmd/$BIN_NAME' or set GIT_SIGNER_SERVER_BIN." >&2
+	echo "       Build it with 'go build -o $BIN_NAME ./cmd/$BIN_NAME' or set SIGNER_SERVER_BIN." >&2
 	return 1
 }
 
@@ -206,13 +206,13 @@ resolve_binary
 # source tree in the same installer run.
 build_client_dist() {
 	if [ "$skip_dist" = "1" ]; then
-		echo "note: GIT_SIGNER_SKIP_DIST=1; client dist not installed" >&2
+		echo "note: SIGNER_SKIP_DIST=1; client dist not installed" >&2
 		echo "      (/install.sh and /v1/client/... will not work)" >&2
 		return 0
 	fi
 	if ! command -v go >/dev/null 2>&1; then
 		echo "error: go not found; cannot build the client dist." >&2
-		echo "       Install Go or set GIT_SIGNER_SKIP_DIST=1 to skip." >&2
+		echo "       Install Go or set SIGNER_SKIP_DIST=1 to skip." >&2
 		return 1
 	fi
 	mkdir -p "$work_dir/dist"
@@ -275,32 +275,32 @@ tmp_env=$fs_env_file.tmp
 	echo "# overwrites this file. The private signing key is read from disk by"
 	echo "# path -- never put key material in this file or in the environment."
 	echo "SIGNER_KEY_PATH=$cfg_key_path"
-	emit SIGNER_COMMITTER_NAME "${GIT_SIGNER_COMMITTER_NAME:-}"
-	emit SIGNER_COMMITTER_EMAIL "${GIT_SIGNER_COMMITTER_EMAIL:-}"
-	emit SIGNER_ALLOWLIST "${GIT_SIGNER_ALLOWLIST:-}"
+	emit SIGNER_COMMITTER_NAME "${SIGNER_COMMITTER_NAME:-}"
+	emit SIGNER_COMMITTER_EMAIL "${SIGNER_COMMITTER_EMAIL:-}"
+	emit SIGNER_ALLOWLIST "${SIGNER_ALLOWLIST:-}"
 	if [ "$skip_dist" = "1" ]; then
 		echo "#SIGNER_DIST_DIR=   # unset: client dist serving disabled"
 	else
 		echo "SIGNER_DIST_DIR=$cfg_dist_dir"
 	fi
 	echo "# Optional; uncomment to override the server defaults."
-	if [ -n "${GIT_SIGNER_PUBLIC_URL:-}" ]; then
-		echo "SIGNER_PUBLIC_URL=$GIT_SIGNER_PUBLIC_URL"
+	if [ -n "${SIGNER_URL:-}" ]; then
+		echo "SIGNER_URL=$SIGNER_URL"
 	else
-		echo "#SIGNER_PUBLIC_URL=https://git-signer.int.exe.xyz"
+		echo "#SIGNER_URL=https://git-signer.int.exe.xyz"
 	fi
-	if [ -n "${GIT_SIGNER_PORT:-}" ]; then
-		echo "SIGNER_PORT=$GIT_SIGNER_PORT"
+	if [ -n "${SIGNER_PORT:-}" ]; then
+		echo "SIGNER_PORT=$SIGNER_PORT"
 	else
 		echo "#SIGNER_PORT=8000"
 	fi
-	if [ -n "${GIT_SIGNER_RATE_PER_MIN:-}" ]; then
-		echo "SIGNER_RATE_PER_MIN=$GIT_SIGNER_RATE_PER_MIN"
+	if [ -n "${SIGNER_RATE_PER_MIN:-}" ]; then
+		echo "SIGNER_RATE_PER_MIN=$SIGNER_RATE_PER_MIN"
 	else
 		echo "#SIGNER_RATE_PER_MIN=60"
 	fi
-	if [ -n "${GIT_SIGNER_RATE_BURST:-}" ]; then
-		echo "SIGNER_RATE_BURST=$GIT_SIGNER_RATE_BURST"
+	if [ -n "${SIGNER_RATE_BURST:-}" ]; then
+		echo "SIGNER_RATE_BURST=$SIGNER_RATE_BURST"
 	else
 		echo "#SIGNER_RATE_BURST=10"
 	fi
@@ -311,7 +311,7 @@ if [ "$staging" -eq 0 ]; then
 fi
 mv -f "$tmp_env" "$fs_env_file"
 if [ "$staging" -eq 1 ]; then
-	if [ -z "${GIT_SIGNER_COMMITTER_NAME:-}" ] || [ -z "${GIT_SIGNER_COMMITTER_EMAIL:-}" ] || [ -z "${GIT_SIGNER_ALLOWLIST:-}" ]; then
+	if [ -z "${SIGNER_COMMITTER_NAME:-}" ] || [ -z "${SIGNER_COMMITTER_EMAIL:-}" ] || [ -z "${SIGNER_ALLOWLIST:-}" ]; then
 		echo "note: staged install with placeholder configuration; fill in the" >&2
 		echo "      REQUIRED entries in $fs_env_file before starting the service." >&2
 	fi
@@ -338,11 +338,11 @@ elif [ ! -f "$fs_key_path" ]; then
 	if [ "$staging" -eq 1 ]; then
 		skip_chown=1
 	fi
-	GIT_SIGNER_KEY_DIR=$fs_key_dir \
-		GIT_SIGNER_KEY_NAME=$KEY_NAME \
-		GIT_SIGNER_USER=$SIGNER_USER \
-		GIT_SIGNER_GROUP=$SIGNER_GROUP \
-		GIT_SIGNER_SKIP_CHOWN=$skip_chown \
+	SIGNER_KEY_DIR=$fs_key_dir \
+		SIGNER_KEY_NAME=$KEY_NAME \
+		SIGNER_USER=$SIGNER_USER \
+		SIGNER_GROUP=$SIGNER_GROUP \
+		SIGNER_SKIP_CHOWN=$skip_chown \
 		"$SCRIPT_DIR/generate-key.sh" >/dev/null
 fi
 
@@ -374,7 +374,7 @@ cat "$fs_key_path.pub"
 echo "" >&2
 if [ "$skip_dist" != "1" ]; then
 	echo "client bootstrap (on any attached agent VM):" >&2
-	echo "  curl -fsSL ${GIT_SIGNER_PUBLIC_URL:-https://git-signer.int.exe.xyz}/install.sh | sh" >&2
+	echo "  curl -fsSL ${SIGNER_URL:-https://git-signer.int.exe.xyz}/install.sh | sh" >&2
 	echo "" >&2
 fi
 echo "logs:      journalctl -u $UNIT_NAME -f" >&2
