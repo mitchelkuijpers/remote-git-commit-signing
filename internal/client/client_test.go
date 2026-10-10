@@ -13,7 +13,9 @@ import (
 	"testing"
 
 	"github.com/mitchelkuijpers/remote-git-commit-signing/internal/client"
+	"github.com/mitchelkuijpers/remote-git-commit-signing/internal/setting"
 	"github.com/mitchelkuijpers/remote-git-commit-signing/internal/signing"
+	"github.com/mitchelkuijpers/remote-git-commit-signing/internal/wire"
 )
 
 // newTestKey generates a throwaway unencrypted ED25519 keypair in the test's
@@ -49,13 +51,13 @@ func writeFile(t *testing.T, path, content string) {
 	}
 }
 
-// newSignServer starts an httptest server whose /v1/sign handler signs the
-// request body with a real ssh-keygen signer. The received payload is recorded
-// into captured when non-nil.
+// newSignServer starts an httptest server whose sign handler (wire.SignPath)
+// signs the request body with a real ssh-keygen signer. The received payload is
+// recorded into captured when non-nil.
 func newSignServer(t *testing.T, signer signing.Signer, captured *[]byte) *httptest.Server {
 	t.Helper()
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/v1/sign" {
+		if r.URL.Path != wire.SignPath {
 			http.NotFound(w, r)
 			return
 		}
@@ -72,7 +74,7 @@ func newSignServer(t *testing.T, signer signing.Signer, captured *[]byte) *httpt
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		w.Header().Set("Content-Type", "application/vnd.sshsig")
+		w.Header().Set("Content-Type", wire.ContentTypeSSHSig)
 		w.Write(sig)
 	}))
 	t.Cleanup(ts.Close)
@@ -160,8 +162,8 @@ func TestSignHappyPathWithLiteralPinnedKey(t *testing.T) {
 
 	var stderr bytes.Buffer
 	code := runClient(signArgv(keyFile, bufferFile), env(map[string]string{
-		"GIT_REMOTE_SIGNER_URL":        ts.URL,
-		"GIT_REMOTE_SIGNER_PUBLIC_KEY": pubLine,
+		setting.SignerURL:       ts.URL,
+		setting.SignerPublicKey: pubLine,
 	}), &stderr)
 
 	if code != 0 {
@@ -198,8 +200,8 @@ func TestSignHappyPathWithPinnedKeyFilePath(t *testing.T) {
 
 	var stderr bytes.Buffer
 	code := runClient(signArgv(keyFile, bufferFile), env(map[string]string{
-		"GIT_REMOTE_SIGNER_URL":        ts.URL,
-		"GIT_REMOTE_SIGNER_PUBLIC_KEY": pinnedFile,
+		setting.SignerURL:       ts.URL,
+		setting.SignerPublicKey: pinnedFile,
 	}), &stderr)
 	if code != 0 {
 		t.Fatalf("Run exit = %d, want 0; stderr=%s", code, stderr.String())
@@ -223,8 +225,8 @@ func TestSignRejectsWrongKeyFile(t *testing.T) {
 
 	var stderr bytes.Buffer
 	code := runClient(signArgv(keyFile, bufferFile), env(map[string]string{
-		"GIT_REMOTE_SIGNER_URL":        raw.URL,
-		"GIT_REMOTE_SIGNER_PUBLIC_KEY": publicKeyLine(t, signerKey),
+		setting.SignerURL:       raw.URL,
+		setting.SignerPublicKey: publicKeyLine(t, signerKey),
 	}), &stderr)
 	if code == 0 {
 		t.Fatal("Run exit = 0, want non-zero for key mismatch")
@@ -255,8 +257,8 @@ func TestSignRejectsUnreachableServer(t *testing.T) {
 
 	var stderr bytes.Buffer
 	code := runClient(signArgv(keyFile, bufferFile), env(map[string]string{
-		"GIT_REMOTE_SIGNER_URL":        deadURL,
-		"GIT_REMOTE_SIGNER_PUBLIC_KEY": pubLine,
+		setting.SignerURL:       deadURL,
+		setting.SignerPublicKey: pubLine,
 	}), &stderr)
 	if code == 0 {
 		t.Fatal("Run exit = 0, want non-zero for unreachable server")
@@ -286,8 +288,8 @@ func TestSignRefusesRedirect(t *testing.T) {
 
 	var stderr bytes.Buffer
 	code := runClient(signArgv(keyFile, bufferFile), env(map[string]string{
-		"GIT_REMOTE_SIGNER_URL":        ts.URL,
-		"GIT_REMOTE_SIGNER_PUBLIC_KEY": pubLine,
+		setting.SignerURL:       ts.URL,
+		setting.SignerPublicKey: pubLine,
 	}), &stderr)
 	if code == 0 {
 		t.Fatal("Run exit = 0, want non-zero for a redirecting signer")
@@ -313,8 +315,8 @@ func TestSignRejectsGarbageSignatureAndRemovesStaleSig(t *testing.T) {
 
 	var stderr bytes.Buffer
 	code := runClient(signArgv(keyFile, bufferFile), env(map[string]string{
-		"GIT_REMOTE_SIGNER_URL":        raw.URL,
-		"GIT_REMOTE_SIGNER_PUBLIC_KEY": pubLine,
+		setting.SignerURL:       raw.URL,
+		setting.SignerPublicKey: pubLine,
 	}), &stderr)
 	if code == 0 {
 		t.Fatal("Run exit = 0, want non-zero for garbage signature")
@@ -341,8 +343,8 @@ func TestSignRejectsSignatureFromUnpinnedKey(t *testing.T) {
 
 	var stderr bytes.Buffer
 	code := runClient(signArgv(keyFile, bufferFile), env(map[string]string{
-		"GIT_REMOTE_SIGNER_URL":        ts.URL,
-		"GIT_REMOTE_SIGNER_PUBLIC_KEY": publicKeyLine(t, pinnedKey),
+		setting.SignerURL:       ts.URL,
+		setting.SignerPublicKey: publicKeyLine(t, pinnedKey),
 	}), &stderr)
 	if code == 0 {
 		t.Fatal("Run exit = 0, want non-zero for signature from unpinned key")
@@ -364,8 +366,8 @@ func TestSignRejectsOversizedResponse(t *testing.T) {
 
 	var stderr bytes.Buffer
 	code := runClient(signArgv(keyFile, bufferFile), env(map[string]string{
-		"GIT_REMOTE_SIGNER_URL":        raw.URL,
-		"GIT_REMOTE_SIGNER_PUBLIC_KEY": pubLine,
+		setting.SignerURL:       raw.URL,
+		setting.SignerPublicKey: pubLine,
 	}), &stderr)
 	if code == 0 {
 		t.Fatal("Run exit = 0, want non-zero for oversized response")
@@ -389,8 +391,8 @@ func TestSignRejectsNonOKStatus(t *testing.T) {
 
 	var stderr bytes.Buffer
 	code := runClient(signArgv(keyFile, bufferFile), env(map[string]string{
-		"GIT_REMOTE_SIGNER_URL":        raw.URL,
-		"GIT_REMOTE_SIGNER_PUBLIC_KEY": pubLine,
+		setting.SignerURL:       raw.URL,
+		setting.SignerPublicKey: pubLine,
 	}), &stderr)
 	if code == 0 {
 		t.Fatal("Run exit = 0, want non-zero for non-OK status")
@@ -418,8 +420,8 @@ func TestSignSanitizesUntrustedErrorBody(t *testing.T) {
 
 	var stderr bytes.Buffer
 	code := runClient(signArgv(keyFile, bufferFile), env(map[string]string{
-		"GIT_REMOTE_SIGNER_URL":        raw.URL,
-		"GIT_REMOTE_SIGNER_PUBLIC_KEY": pubLine,
+		setting.SignerURL:       raw.URL,
+		setting.SignerPublicKey: pubLine,
 	}), &stderr)
 	if code == 0 {
 		t.Fatal("Run exit = 0, want non-zero for non-OK status")
@@ -491,8 +493,8 @@ func TestSignRequiresGitNamespace(t *testing.T) {
 	var stderr bytes.Buffer
 	code := runClient([]string{"git-remote-sign", "-Y", "sign", "-n", "other", "-f", keyFile, bufferFile},
 		env(map[string]string{
-			"GIT_REMOTE_SIGNER_URL":        raw.URL,
-			"GIT_REMOTE_SIGNER_PUBLIC_KEY": pubLine,
+			setting.SignerURL:       raw.URL,
+			setting.SignerPublicKey: pubLine,
 		}), &stderr)
 	if code == 0 {
 		t.Fatal("exit = 0, want non-zero for non-git namespace")
@@ -513,10 +515,10 @@ func TestSignRequiresConfiguration(t *testing.T) {
 	writeFile(t, bufferFile, "payload\n")
 
 	cases := map[string]map[string]string{
-		"missing url":    {"GIT_REMOTE_SIGNER_PUBLIC_KEY": pubLine},
-		"missing pubkey": {"GIT_REMOTE_SIGNER_URL": "http://127.0.0.1:1"},
-		"bad url":        {"GIT_REMOTE_SIGNER_URL": "ftp://x", "GIT_REMOTE_SIGNER_PUBLIC_KEY": pubLine},
-		"bad timeout":    {"GIT_REMOTE_SIGNER_URL": "http://127.0.0.1:1", "GIT_REMOTE_SIGNER_PUBLIC_KEY": pubLine, "GIT_REMOTE_SIGN_TIMEOUT": "nonsense"},
+		"missing url":    {setting.SignerPublicKey: pubLine},
+		"missing pubkey": {setting.SignerURL: "http://127.0.0.1:1"},
+		"bad url":        {setting.SignerURL: "ftp://x", setting.SignerPublicKey: pubLine},
+		"bad timeout":    {setting.SignerURL: "http://127.0.0.1:1", setting.SignerPublicKey: pubLine, setting.SignerTimeout: "nonsense"},
 	}
 	for name, e := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -550,9 +552,9 @@ func TestSignTimeoutIsApplied(t *testing.T) {
 
 	var stderr bytes.Buffer
 	code := runClient(signArgv(keyFile, bufferFile), env(map[string]string{
-		"GIT_REMOTE_SIGNER_URL":        ts.URL,
-		"GIT_REMOTE_SIGNER_PUBLIC_KEY": pubLine,
-		"GIT_REMOTE_SIGN_TIMEOUT":      "50ms",
+		setting.SignerURL:       ts.URL,
+		setting.SignerPublicKey: pubLine,
+		setting.SignerTimeout:   "50ms",
 	}), &stderr)
 	if code == 0 {
 		t.Fatal("exit = 0, want non-zero on timeout")

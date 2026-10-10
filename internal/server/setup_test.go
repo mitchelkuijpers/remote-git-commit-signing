@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -39,7 +40,7 @@ func distDirWith(t *testing.T, files map[string]string) string {
 
 func TestInstallScriptRendersPinnedConfig(t *testing.T) {
 	signer, publicKey := newSigner(t)
-	cfg := server.Config{
+	cfg := server.HandlerConfig{
 		Committer: server.Committer{Name: "Jane Dev", Email: "jane@example.com"},
 		DistDir:   t.TempDir(),
 	}
@@ -57,10 +58,12 @@ func TestInstallScriptRendersPinnedConfig(t *testing.T) {
 	// agent VM operator runs zero configuration by hand.
 	for _, want := range []string{
 		`base='https://git-signer.int.exe.xyz'`,
-		"GIT_REMOTE_SIGNER_PUBLIC_KEY='" + strings.TrimSpace(publicKey) + "'",
-		`GIT_SIGNER_COMMITTER_NAME='Jane Dev'`,
-		`GIT_SIGNER_COMMITTER_EMAIL='jane@example.com'`,
-		`"$base/v1/client/git-remote-sign-linux-$arch"`,
+		`SIGNER_URL=$base`,
+		`SIGNER_PUBLIC_KEY='` + strings.TrimSpace(publicKey) + `'`,
+		`SIGNER_COMMITTER_NAME='Jane Dev'`,
+		`SIGNER_COMMITTER_EMAIL='jane@example.com'`,
+		`curl -fsSL "$base/v1/client/git-remote-sign-linux-amd64" -o "$tmp/git-remote-sign"`,
+		`curl -fsSL "$base/v1/client/git-remote-sign-linux-arm64" -o "$tmp/git-remote-sign"`,
 		`"$base/v1/client/install-client.sh"`,
 		`sh "$tmp/install-client.sh"`,
 	} {
@@ -74,7 +77,7 @@ func TestInstallScriptRendersPinnedConfig(t *testing.T) {
 
 func TestInstallScriptShellQuotesValues(t *testing.T) {
 	signer, publicKey := newSigner(t)
-	cfg := server.Config{
+	cfg := server.HandlerConfig{
 		Committer: server.Committer{Name: "O'Brien", Email: "obrien@example.com"},
 		DistDir:   t.TempDir(),
 	}
@@ -89,16 +92,16 @@ func TestInstallScriptShellQuotesValues(t *testing.T) {
 
 func TestInstallScriptUsesConfiguredPublicURL(t *testing.T) {
 	signer, publicKey := newSigner(t)
-	cfg := server.Config{
+	cfg := server.HandlerConfig{
 		Committer: server.Committer{Name: "Jane Dev", Email: "jane@example.com"},
 		DistDir:   t.TempDir(),
-		PublicURL: "http://signer.internal:9000/",
+		SignerURL: "http://signer.internal:9000/",
 	}
 	ts := newTestHTTPServer(t, signer, publicKey, cfg)
 
 	_, body := get(t, ts.URL+"/install.sh")
 	if !strings.Contains(body, `base='http://signer.internal:9000'`) {
-		t.Fatalf("install.sh ignores SIGNER_PUBLIC_URL (trailing slash must be stripped)\nscript:\n%s", body)
+		t.Fatalf("install.sh ignores SIGNER_URL (trailing slash must be stripped)\nscript:\n%s", body)
 	}
 }
 
@@ -106,17 +109,73 @@ func TestInstallScriptUnavailableWithoutKeyOrDist(t *testing.T) {
 	signer, publicKey := newSigner(t)
 
 	// Ready but no dist directory: the script would 404 on its own downloads.
-	ts := newTestHTTPServer(t, signer, publicKey, server.Config{})
+	ts := newTestHTTPServer(t, signer, publicKey, server.HandlerConfig{})
 	resp, body := get(t, ts.URL+"/install.sh")
 	if resp.StatusCode != http.StatusServiceUnavailable {
 		t.Fatalf("GET /install.sh (no dist) status = %d, want 503: %s", resp.StatusCode, body)
 	}
 
 	// Dist configured but server not ready: no public key to render.
-	ts = newTestHTTPServer(t, nil, "", server.Config{DistDir: t.TempDir()})
+	ts = newTestHTTPServer(t, nil, "", server.HandlerConfig{DistDir: t.TempDir()})
 	resp, body = get(t, ts.URL+"/install.sh")
 	if resp.StatusCode != http.StatusServiceUnavailable {
 		t.Fatalf("GET /install.sh (not ready) status = %d, want 503: %s", resp.StatusCode, body)
+	}
+}
+
+// curlRegexp matches every download command in the rendered bootstrap script.
+var curlRegexp = regexp.MustCompile(`curl -fsSL (\S+)`)
+
+// TestInstallScriptDownloadsOnlyWhitelistedArtifacts decodes the client file
+// whitelist indirectly from the rendered bootstrap script: every curl -fsSL
+// target must be a "$base/v1/client/<name>" download, the resolved set must be
+// exactly the whitelisted artifacts (nothing outside the whitelist is curled,
+// nothing whitelisted is skipped), and the server must serve each curled name.
+// The 404 side of the whitelist lives in TestClientFileRefused.
+func TestInstallScriptDownloadsOnlyWhitelistedArtifacts(t *testing.T) {
+	signer, publicKey := newSigner(t)
+	dist := distDirWith(t, map[string]string{
+		"git-remote-sign-linux-amd64": "fake-amd64-binary",
+		"git-remote-sign-linux-arm64": "fake-arm64-binary",
+		"install-client.sh":           "#!/bin/sh\necho installer\n",
+	})
+	ts := newTestHTTPServer(t, signer, publicKey, server.HandlerConfig{DistDir: dist})
+
+	_, script := get(t, ts.URL+"/install.sh")
+
+	curled := map[string]bool{}
+	for _, m := range curlRegexp.FindAllStringSubmatch(script, -1) {
+		const prefix = `"$base/v1/client/`
+		name, ok := strings.CutPrefix(m[1], prefix)
+		if !ok {
+			t.Fatalf("install.sh curls outside /v1/client/: %s", m[0])
+		}
+		curled[strings.TrimSuffix(name, `"`)] = true
+	}
+
+	whitelist := map[string]bool{
+		"git-remote-sign-linux-amd64": true,
+		"git-remote-sign-linux-arm64": true,
+		"install-client.sh":           true,
+	}
+	for name := range curled {
+		if !whitelist[name] {
+			t.Fatalf("install.sh downloads non-whitelisted client file %q\nscript:\n%s", name, script)
+		}
+	}
+	for name := range whitelist {
+		if !curled[name] {
+			t.Fatalf("install.sh never downloads whitelisted client file %q\nscript:\n%s", name, script)
+		}
+	}
+
+	// The dist fixture holds every whitelisted artifact, so each curled name
+	// must resolve to a served file: script and endpoint agree on the set.
+	for name := range curled {
+		resp, body := get(t, ts.URL+"/v1/client/"+name)
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("GET /v1/client/%s status = %d, want 200: %s", name, resp.StatusCode, body)
+		}
 	}
 }
 
@@ -126,7 +185,7 @@ func TestClientFileServed(t *testing.T) {
 		"git-remote-sign-linux-amd64": "fake-amd64-binary",
 		"install-client.sh":           "#!/bin/sh\necho installer\n",
 	})
-	ts := newTestHTTPServer(t, signer, publicKey, server.Config{DistDir: dist})
+	ts := newTestHTTPServer(t, signer, publicKey, server.HandlerConfig{DistDir: dist})
 
 	resp, body := get(t, ts.URL+"/v1/client/git-remote-sign-linux-amd64")
 	if resp.StatusCode != http.StatusOK || body != "fake-amd64-binary" {
@@ -163,7 +222,7 @@ func TestClientFileRefused(t *testing.T) {
 		{"dist disabled", "", "/v1/client/git-remote-sign-linux-amd64"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			ts := newTestHTTPServer(t, signer, publicKey, server.Config{DistDir: tc.dist})
+			ts := newTestHTTPServer(t, signer, publicKey, server.HandlerConfig{DistDir: tc.dist})
 			resp, body := get(t, ts.URL+tc.path)
 			if resp.StatusCode != http.StatusNotFound {
 				t.Fatalf("GET %s status = %d, want 404: %s", tc.path, resp.StatusCode, body)
@@ -177,7 +236,7 @@ func TestClientFileRefused(t *testing.T) {
 
 func TestLandingPageShowsBootstrapCommand(t *testing.T) {
 	signer, publicKey := newSigner(t)
-	ts := newTestHTTPServer(t, signer, publicKey, server.Config{})
+	ts := newTestHTTPServer(t, signer, publicKey, server.HandlerConfig{})
 
 	_, body := get(t, ts.URL+"/")
 	rendered := renderBody(body)

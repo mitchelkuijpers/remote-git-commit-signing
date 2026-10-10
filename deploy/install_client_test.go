@@ -69,12 +69,12 @@ func moduleRoot(t *testing.T) string {
 var dropEnv = map[string]bool{
 	"HOME": true, "XDG_CONFIG_HOME": true, "TMPDIR": true,
 	"GIT_CONFIG_GLOBAL": true, "GIT_CONFIG_SYSTEM": true,
-	"GIT_REMOTE_SIGNER_URL": true, "GIT_REMOTE_SIGNER_PUBLIC_KEY": true,
+	"SIGNER_URL": true, "SIGNER_PUBLIC_KEY": true,
 	"GIT_REMOTE_SIGNER_BIN": true, "GIT_REMOTE_SIGNER_RELEASE_VERSION": true,
 	"GIT_REMOTE_SIGNER_DOWNLOAD_BASE": true, "GIT_REMOTE_SIGNER_INSTALL_DIR": true,
 	"GIT_REMOTE_SIGNER_CONFIG_DIR": true, "GIT_REMOTE_SIGNER_PROFILE": true,
-	"GIT_REMOTE_SIGN_TIMEOUT":   true,
-	"GIT_SIGNER_COMMITTER_NAME": true, "GIT_SIGNER_COMMITTER_EMAIL": true,
+	"SIGNER_TIMEOUT":        true,
+	"SIGNER_COMMITTER_NAME": true, "SIGNER_COMMITTER_EMAIL": true,
 }
 
 // mergeEnv starts from the process environment, drops host state that could
@@ -251,8 +251,7 @@ func startSigner(t *testing.T) *signerFixture {
 	if err != nil {
 		t.Fatalf("NewSSHKeygenSigner: %v", err)
 	}
-	cfg := server.Config{
-		KeyPath:    keyPath,
+	cfg := server.HandlerConfig{
 		Committer:  server.Committer{Name: installName, Email: installEmail},
 		Allowlist:  server.Allowlist{installVMIdentity},
 		RatePerMin: 6000,
@@ -262,7 +261,7 @@ func startSigner(t *testing.T) *signerFixture {
 	srv := server.New(signer, pubLine, cfg, logger)
 
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		r.Header.Set("X-Exedev-Source-Vm", installVMIdentity)
+		server.StampSourceVM(r.Header, installVMIdentity)
 		srv.ServeHTTP(w, r)
 	})
 	ts := httptest.NewServer(handler)
@@ -275,10 +274,10 @@ func startSigner(t *testing.T) *signerFixture {
 func happyEnv(t *testing.T, sandbox string, s *signerFixture, clientBin string) map[string]string {
 	t.Helper()
 	overrides := map[string]string{
-		"GIT_REMOTE_SIGNER_URL":        s.url,
-		"GIT_REMOTE_SIGNER_PUBLIC_KEY": s.pubPath,
-		"GIT_SIGNER_COMMITTER_NAME":    installName,
-		"GIT_SIGNER_COMMITTER_EMAIL":   installEmail,
+		"SIGNER_URL":             s.url,
+		"SIGNER_PUBLIC_KEY":      s.pubPath,
+		"SIGNER_COMMITTER_NAME":  installName,
+		"SIGNER_COMMITTER_EMAIL": installEmail,
 	}
 	if clientBin != "" {
 		overrides["GIT_REMOTE_SIGNER_BIN"] = clientBin
@@ -491,11 +490,11 @@ func TestInstallClientFailsWhenSignerUnreachable(t *testing.T) {
 	sandbox := newSandbox(t)
 	env := installerEnv(sandbox, map[string]string{
 		// Nothing listens here, so GET /healthz is refused immediately.
-		"GIT_REMOTE_SIGNER_URL":        "http://127.0.0.1:1",
-		"GIT_REMOTE_SIGNER_PUBLIC_KEY": writePub(t, newTestKey(t)),
-		"GIT_SIGNER_COMMITTER_NAME":    installName,
-		"GIT_SIGNER_COMMITTER_EMAIL":   installEmail,
-		"GIT_REMOTE_SIGNER_BIN":        clientBin,
+		"SIGNER_URL":             "http://127.0.0.1:1",
+		"SIGNER_PUBLIC_KEY":      writePub(t, newTestKey(t)),
+		"SIGNER_COMMITTER_NAME":  installName,
+		"SIGNER_COMMITTER_EMAIL": installEmail,
+		"GIT_REMOTE_SIGNER_BIN":  clientBin,
 	})
 
 	r := runInstaller(t, env)
@@ -518,11 +517,11 @@ func TestInstallClientFailsOnPinnedKeyMismatch(t *testing.T) {
 	sandbox := newSandbox(t)
 	// Pin a different key than the server holds.
 	env := installerEnv(sandbox, map[string]string{
-		"GIT_REMOTE_SIGNER_URL":        s.url,
-		"GIT_REMOTE_SIGNER_PUBLIC_KEY": writePub(t, newTestKey(t)),
-		"GIT_SIGNER_COMMITTER_NAME":    installName,
-		"GIT_SIGNER_COMMITTER_EMAIL":   installEmail,
-		"GIT_REMOTE_SIGNER_BIN":        clientBin,
+		"SIGNER_URL":             s.url,
+		"SIGNER_PUBLIC_KEY":      writePub(t, newTestKey(t)),
+		"SIGNER_COMMITTER_NAME":  installName,
+		"SIGNER_COMMITTER_EMAIL": installEmail,
+		"GIT_REMOTE_SIGNER_BIN":  clientBin,
 	})
 
 	r := runInstaller(t, env)
@@ -550,10 +549,10 @@ func TestInstallClientInstallsVerifiedDownload(t *testing.T) {
 	rel := newReleaseServer(t, clientBin, "")
 
 	env := installerEnv(sandbox, map[string]string{
-		"GIT_REMOTE_SIGNER_URL":           s.url,
-		"GIT_REMOTE_SIGNER_PUBLIC_KEY":    s.pubPath,
-		"GIT_SIGNER_COMMITTER_NAME":       installName,
-		"GIT_SIGNER_COMMITTER_EMAIL":      installEmail,
+		"SIGNER_URL":                      s.url,
+		"SIGNER_PUBLIC_KEY":               s.pubPath,
+		"SIGNER_COMMITTER_NAME":           installName,
+		"SIGNER_COMMITTER_EMAIL":          installEmail,
 		"GIT_REMOTE_SIGNER_DOWNLOAD_BASE": rel.url,
 	})
 
@@ -583,10 +582,10 @@ func TestInstallClientRejectsChecksumMismatch(t *testing.T) {
 	rel := newReleaseServer(t, clientBin, strings.Repeat("0", 64))
 
 	env := installerEnv(sandbox, map[string]string{
-		"GIT_REMOTE_SIGNER_URL":           s.url,
-		"GIT_REMOTE_SIGNER_PUBLIC_KEY":    s.pubPath,
-		"GIT_SIGNER_COMMITTER_NAME":       installName,
-		"GIT_SIGNER_COMMITTER_EMAIL":      installEmail,
+		"SIGNER_URL":                      s.url,
+		"SIGNER_PUBLIC_KEY":               s.pubPath,
+		"SIGNER_COMMITTER_NAME":           installName,
+		"SIGNER_COMMITTER_EMAIL":          installEmail,
 		"GIT_REMOTE_SIGNER_DOWNLOAD_BASE": rel.url,
 	})
 
@@ -611,7 +610,7 @@ func TestInstallClientMissingConfigFailsClearly(t *testing.T) {
 	if r.exit == 0 {
 		t.Fatalf("installer succeeded with no configuration: %s", r)
 	}
-	if !strings.Contains(r.stderr, "GIT_REMOTE_SIGNER_URL") || !strings.Contains(r.stderr, "required") {
+	if !strings.Contains(r.stderr, "SIGNER_URL") || !strings.Contains(r.stderr, "required") {
 		t.Errorf("error is not actionable: %s", r)
 	}
 }
@@ -632,11 +631,11 @@ func TestInstallClientMissingCurlFailsClearly(t *testing.T) {
 	}
 	sandbox := newSandbox(t)
 	env := installerEnv(sandbox, map[string]string{
-		"PATH":                         fake,
-		"GIT_REMOTE_SIGNER_URL":        "http://127.0.0.1:1",
-		"GIT_REMOTE_SIGNER_PUBLIC_KEY": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA test@example.com",
-		"GIT_SIGNER_COMMITTER_NAME":    installName,
-		"GIT_SIGNER_COMMITTER_EMAIL":   installEmail,
+		"PATH":                   fake,
+		"SIGNER_URL":             "http://127.0.0.1:1",
+		"SIGNER_PUBLIC_KEY":      "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA test@example.com",
+		"SIGNER_COMMITTER_NAME":  installName,
+		"SIGNER_COMMITTER_EMAIL": installEmail,
 	})
 
 	r := runInstaller(t, env)
@@ -656,11 +655,11 @@ func TestInstallClientAcceptsLiteralPinnedKeyAndSkipsSelfTest(t *testing.T) {
 	s := startSigner(t)
 	sandbox := newSandbox(t)
 	env := installerEnv(sandbox, map[string]string{
-		"GIT_REMOTE_SIGNER_URL":        s.url,
-		"GIT_REMOTE_SIGNER_PUBLIC_KEY": s.pubLine, // literal line, not a path
-		"GIT_SIGNER_COMMITTER_NAME":    installName,
-		"GIT_SIGNER_COMMITTER_EMAIL":   installEmail,
-		"GIT_REMOTE_SIGNER_BIN":        clientBin,
+		"SIGNER_URL":             s.url,
+		"SIGNER_PUBLIC_KEY":      s.pubLine, // literal line, not a path
+		"SIGNER_COMMITTER_NAME":  installName,
+		"SIGNER_COMMITTER_EMAIL": installEmail,
+		"GIT_REMOTE_SIGNER_BIN":  clientBin,
 	})
 
 	r := runInstaller(t, env, "--skip-selftest")

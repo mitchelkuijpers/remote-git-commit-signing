@@ -16,18 +16,16 @@ import (
 	"time"
 
 	"github.com/mitchelkuijpers/remote-git-commit-signing/internal/keyutil"
+	"github.com/mitchelkuijpers/remote-git-commit-signing/internal/wire"
 )
 
 // namespaceGit is the only SSHSIG namespace Git uses for commit signing.
 const namespaceGit = "git"
 
-// Defaults applied when the corresponding SSHKeygenConfig field is zero.
-const (
-	// DefaultMaxPayloadBytes caps the payload size accepted by a signer.
-	DefaultMaxPayloadBytes = 1 << 20 // 1 MiB
-	// DefaultTimeout bounds a single ssh-keygen invocation.
-	DefaultTimeout = 5 * time.Second
-)
+// DefaultKeygenTimeout bounds a single ssh-keygen invocation; applied when the
+// corresponding SSHKeygenConfig field is zero. The payload cap lives in
+// wire.MaxPayloadBytes, which backs SSHKeygenConfig.MaxPayloadBytes.
+const DefaultKeygenTimeout = 5 * time.Second
 
 // ErrPayloadTooLarge is returned when a payload exceeds the configured limit.
 var ErrPayloadTooLarge = errors.New("signing: payload too large")
@@ -44,10 +42,10 @@ type SSHKeygenConfig struct {
 	// KeyPath is the path to the private signing key. Required.
 	KeyPath string
 	// MaxPayloadBytes is the largest payload accepted. Defaults to
-	// DefaultMaxPayloadBytes when zero.
+	// wire.MaxPayloadBytes when zero.
 	MaxPayloadBytes int64
-	// Timeout bounds a single signing invocation. Defaults to DefaultTimeout
-	// when zero.
+	// Timeout bounds a single signing invocation. Defaults to
+	// DefaultKeygenTimeout when zero.
 	Timeout time.Duration
 	// TempDir is the parent directory for per-request working directories.
 	// Defaults to the system temporary directory when empty.
@@ -78,10 +76,10 @@ func NewSSHKeygenSigner(cfg SSHKeygenConfig) (*SSHKeygenSigner, error) {
 		baseTmp:  cfg.TempDir,
 	}
 	if s.maxBytes <= 0 {
-		s.maxBytes = DefaultMaxPayloadBytes
+		s.maxBytes = wire.MaxPayloadBytes
 	}
 	if s.timeout <= 0 {
-		s.timeout = DefaultTimeout
+		s.timeout = DefaultKeygenTimeout
 	}
 	return s, nil
 }
@@ -94,7 +92,7 @@ func PublicKey(ctx context.Context, keyPath string) (string, error) {
 		return "", errors.New("signing: key path is required")
 	}
 
-	stdout, stderr, err := keyutil.RunKeygen(ctx, DefaultTimeout, "ssh-keygen", []string{"-y", "-f", keyPath}, nil, "")
+	stdout, stderr, err := keyutil.RunKeygen(ctx, DefaultKeygenTimeout, "ssh-keygen", []string{"-y", "-f", keyPath}, nil, "")
 	if err != nil {
 		if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
 			return "", fmt.Errorf("signing: ssh-keygen -y: %w", err)
