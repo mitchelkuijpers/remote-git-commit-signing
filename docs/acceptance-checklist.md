@@ -1,8 +1,10 @@
 # Acceptance checklist — GitLab Verified (manual gate)
 
-> **Status: NOT YET RUN.** This is the ticket #12 gate: a manual, real-world
-> end-to-end that involves a real GitLab account. It **blocks production use** of
-> this project until it passes. Do not mark it complete without recorded evidence.
+> **Status: PASSED 2026-10-10.** This is the ticket #12 gate: a manual, real-world
+> end-to-end that involves a real GitLab account. Every step below passed with
+> evidence recorded inline; see *Sign-off* at the bottom. GitLab URLs and
+> screenshots are withheld from the repo by operator choice; the badge was
+> confirmed by the operator on the pushed commit.
 
 ## Agent pre-flight (2026-10-09)
 
@@ -35,13 +37,13 @@ exercises. Spec #1 can be closed once every box below is checked with evidence.
 
 ## Preconditions
 
-- [ ] Signer VM deployed ([key-lifecycle.md](key-lifecycle.md)) and reachable at the
+- [x] Signer VM deployed ([key-lifecycle.md](key-lifecycle.md)) and reachable at the
       peer-integration URL. The client binary comes from the signer's own
       `/v1/client/...` endpoints, so the GitHub release assets are optional
       (archival parity; see *Agent pre-flight* above for the blocked upload).
-- [ ] A disposable GitLab project available (throwaway; safe to delete afterwards).
-- [ ] A fresh agent VM available, not yet provisioned.
-- [ ] `git`, `ssh-keygen`, and `curl` present on the agent VM.
+- [x] A disposable GitLab project available (throwaway; safe to delete afterwards).
+- [x] A fresh agent VM available, not yet provisioned.
+- [x] `git`, `ssh-keygen`, and `curl` present on the agent VM.
 
 ## Steps
 
@@ -59,9 +61,11 @@ Expected: the key appears under *SSH Keys* with usage **Signing** (not
 *Authentication & Signing*), and its fingerprint matches
 `ssh-keygen -lf /var/lib/git-signer/signing_key.pub`.
 
-Evidence: <!-- TODO: fingerprint, GitLab key ID/URL, screenshot -->
+Evidence: key fingerprint `SHA256:XD2RQMyHKVp1dUi2O/dzIzLrJSOQSvd8nusQcn7FLSM`,
+served at `/v1/public-key` and matching the on-disk key. Registered by the
+operator with usage **Signing** only; GitLab key ID/URL withheld from the repo.
 
-Outcome: <!-- TODO: pass/fail + notes -->
+Outcome: pass (2026-10-10).
 
 ### 2. Confirm the committer email is verified
 
@@ -72,9 +76,11 @@ the signer means the payload committer does not match the pinned identity).
 Expected: `SIGNER_COMMITTER_EMAIL` is a verified email on the account that owns the
 registered key.
 
-Evidence: <!-- TODO: email + verification state -->
+Evidence: the pinned `SIGNER_COMMITTER_EMAIL` (set in the signer env file; not
+restated here) is a verified email on the account — proven transitively: GitLab
+would not have shown the pushed commit as Verified otherwise.
 
-Outcome: <!-- TODO: pass/fail + notes -->
+Outcome: pass (2026-10-10).
 
 ### 3. Provision a real agent VM with the installer
 
@@ -90,9 +96,14 @@ Expected: the installer reaches the signer, cross-checks the pinned key, install
 the client, and reports `self-test passed` (commit signed through the signer and
 verified locally with the pinned key). No private key is written to the VM.
 
-Evidence: <!-- TODO: installer output tail, VM name/tag -->
+Evidence: agent VM `brent` (peer integration attached). Bootstrap output tail:
+key cross-check passed, client installed, `self-test passed: commit signed
+through the signer and verified locally` — full output in the #12 issue
+comments. One caveat surfaced here: shells opened *before* the install lack the
+client env (sourced via `.profile`; `. ~/.config/git-remote-signer/env` fixes
+existing shells). No private key material on the VM.
 
-Outcome: <!-- TODO: pass/fail + notes -->
+Outcome: pass (2026-10-10).
 
 ### 4. Commit with the verified committer email
 
@@ -110,9 +121,13 @@ git verify-commit HEAD
 Expected: the commit succeeds, and `git verify-commit HEAD` exits `0` with
 `Good "git" signature for <verified email>`. The commit carries a `gpgsig` header.
 
-Evidence: <!-- TODO: commit hash, signature output -->
+Evidence: commit `919d989ded73555082260e412ef0013aaf0f954e` ("test: remote-signed
+commit") in the agent VM's working repo. `git verify-commit HEAD` exited 0 with
+`Good "git" signature for <pinned email> with ED25519 key
+SHA256:XD2RQMyHKVp1dUi2O/dzIzLrJSOQSvd8nusQcn7FLSM`; `git log --show-signature -1`
+agrees. Commit carries the `gpgsig` header.
 
-Outcome: <!-- TODO: pass/fail + notes -->
+Outcome: pass (2026-10-10).
 
 ### 5. Push to a disposable repository
 
@@ -122,9 +137,10 @@ concerns.)
 
 Expected: the push succeeds.
 
-Evidence: <!-- TODO: remote URL, pushed commit hash -->
+Evidence: pushed commit `919d989ded73555082260e412ef0013aaf0f954e` to the
+disposable GitLab project (remote URL withheld from the repo); push succeeded.
 
-Outcome: <!-- TODO: pass/fail + notes -->
+Outcome: pass (2026-10-10).
 
 ### 6. Confirm GitLab shows the commit as Verified
 
@@ -132,23 +148,24 @@ Action: open the commit in GitLab and read the badge next to the committer.
 
 Expected: the commit displays as **Verified**.
 
-Evidence: <!-- TODO: commit URL (and screenshot) showing the Verified badge -->
+Evidence: operator opened the pushed commit in GitLab and confirmed the
+**Verified** badge (2026-10-10). Commit URL/screenshot withheld from the repo.
 
-Outcome: <!-- TODO: pass/fail + notes -->
+Outcome: pass (2026-10-10).
 
 ## Sign-off
 
-- [ ] All steps pass with evidence recorded above.
-- [ ] Spec #1 can be closed.
+- [x] All steps pass with evidence recorded above.
+- [x] Spec #1 can be closed.
 
 | Field | Value |
 | --- | --- |
-| Date run | <!-- TODO --> |
-| Operator | <!-- TODO --> |
-| Signer VM / key fingerprint | <!-- TODO --> |
-| Agent VM | <!-- TODO --> |
-| Disposable project | <!-- TODO --> |
-| Overall result | <!-- TODO: PASS / FAIL --> |
+| Date run | 2026-10-10 (agent pre-flight 2026-10-09) |
+| Operator | repository owner (GitLab steps), agent-assisted for VM/deploy steps |
+| Signer VM / key fingerprint | exe.dev signer VM; `SHA256:XD2RQMyHKVp1dUi2O/dzIzLrJSOQSvd8nusQcn7FLSM` (ED25519) |
+| Agent VM | `brent` (exe.dev, peer integration attached) |
+| Disposable project | GitLab throwaway project (URL withheld) |
+| Overall result | **PASS** |
 
 If any step fails, use [troubleshooting.md](troubleshooting.md) and record the
 observed failure before re-running. A commit that pushes but shows no **Verified**
