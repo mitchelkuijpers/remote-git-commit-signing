@@ -45,7 +45,7 @@ key to have those commits show as verified.
 On any VM attached to the signer&rsquo;s peer integration, provision the client
 with one command (idempotent, safe to re-run):
 </p>
-<pre>curl -fsSL {{.PublicURL}}/install.sh | sh</pre>
+<pre>curl -fsSL {{.SignerURL}}/install.sh | sh</pre>
 <p>
 The script downloads the client and installer from this signer and configures
 Git to sign every commit through it. No private key is ever stored on the
@@ -96,8 +96,8 @@ func (s *Server) handleLandingPage(w http.ResponseWriter, _ *http.Request) {
 	if err := landingTemplate.Execute(w, struct {
 		PublicKey   string
 		Fingerprint string
-		PublicURL   string
-	}{PublicKey: strings.TrimSpace(s.publicKey), Fingerprint: fingerprint, PublicURL: s.publicURL}); err != nil {
+		SignerURL   string
+	}{PublicKey: strings.TrimSpace(s.publicKey), Fingerprint: fingerprint, SignerURL: s.signerURL}); err != nil {
 		// The header is already written; only the log can record the failure.
 		s.logger.Error("landing page rendering failed",
 			"event", "landing_page", "status", "template_failed", "error", err.Error())

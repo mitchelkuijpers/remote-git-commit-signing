@@ -7,13 +7,8 @@ import (
 	"os"
 	"strings"
 	"time"
-)
 
-// Environment variables understood by the client.
-const (
-	envSignerURL = "GIT_REMOTE_SIGNER_URL"
-	envPublicKey = "GIT_REMOTE_SIGNER_PUBLIC_KEY"
-	envTimeout   = "GIT_REMOTE_SIGN_TIMEOUT"
+	"github.com/mitchelkuijpers/remote-git-commit-signing/internal/setting"
 )
 
 // Defaults applied when the corresponding environment variable is unset.
@@ -26,7 +21,7 @@ const (
 
 // config is the client configuration, sourced from the environment.
 type config struct {
-	// signURL is GIT_REMOTE_SIGNER_URL with any trailing slash removed.
+	// signURL is SIGNER_URL with any trailing slash removed.
 	signURL string
 	// pinned is the trusted public key.
 	pinned publicKey
@@ -43,35 +38,35 @@ func loadConfig(getenv func(string) string) (config, error) {
 		maxResponseBytes: DefaultMaxResponseBytes,
 	}
 
-	rawURL := strings.TrimSpace(getenv(envSignerURL))
+	rawURL := strings.TrimSpace(getenv(setting.SignerURL))
 	if rawURL == "" {
-		return config{}, fmt.Errorf("%s is required", envSignerURL)
+		return config{}, fmt.Errorf("%s is required", setting.SignerURL)
 	}
 	u, err := url.Parse(rawURL)
 	if err != nil {
-		return config{}, fmt.Errorf("%s: %w", envSignerURL, err)
+		return config{}, fmt.Errorf("%s: %w", setting.SignerURL, err)
 	}
 	if u.Scheme != "http" && u.Scheme != "https" {
-		return config{}, fmt.Errorf("%s: unsupported scheme %q in %q", envSignerURL, u.Scheme, rawURL)
+		return config{}, fmt.Errorf("%s: unsupported scheme %q in %q", setting.SignerURL, u.Scheme, rawURL)
 	}
 	if u.Host == "" {
-		return config{}, fmt.Errorf("%s: missing host in %q", envSignerURL, rawURL)
+		return config{}, fmt.Errorf("%s: missing host in %q", setting.SignerURL, rawURL)
 	}
 	cfg.signURL = strings.TrimRight(rawURL, "/")
 
-	pinned, err := loadPinnedKey(getenv(envPublicKey))
+	pinned, err := loadPinnedKey(getenv(setting.SignerPublicKey))
 	if err != nil {
 		return config{}, err
 	}
 	cfg.pinned = pinned
 
-	if raw := strings.TrimSpace(getenv(envTimeout)); raw != "" {
+	if raw := strings.TrimSpace(getenv(setting.SignerTimeout)); raw != "" {
 		d, err := time.ParseDuration(raw)
 		if err != nil {
-			return config{}, fmt.Errorf("%s: %w", envTimeout, err)
+			return config{}, fmt.Errorf("%s: %w", setting.SignerTimeout, err)
 		}
 		if d <= 0 {
-			return config{}, fmt.Errorf("%s: timeout must be positive, got %q", envTimeout, raw)
+			return config{}, fmt.Errorf("%s: timeout must be positive, got %q", setting.SignerTimeout, raw)
 		}
 		cfg.timeout = d
 	}
@@ -87,12 +82,12 @@ type publicKey struct {
 	blob string
 }
 
-// loadPinnedKey resolves GIT_REMOTE_SIGNER_PUBLIC_KEY. The value may be either
+// loadPinnedKey resolves SIGNER_PUBLIC_KEY. The value may be either
 // a literal authorized_keys line or a path to a readable file containing one.
 func loadPinnedKey(value string) (publicKey, error) {
 	v := strings.TrimSpace(value)
 	if v == "" {
-		return publicKey{}, fmt.Errorf("%s is required", envPublicKey)
+		return publicKey{}, fmt.Errorf("%s is required", setting.SignerPublicKey)
 	}
 
 	if pk, err := parsePublicKeyLine(v); err == nil {
@@ -101,11 +96,11 @@ func loadPinnedKey(value string) (publicKey, error) {
 
 	data, err := os.ReadFile(v)
 	if err != nil {
-		return publicKey{}, fmt.Errorf("%s: not a valid SSH public key line and not a readable file: %w", envPublicKey, err)
+		return publicKey{}, fmt.Errorf("%s: not a valid SSH public key line and not a readable file: %w", setting.SignerPublicKey, err)
 	}
 	pk, err := parsePublicKeyLine(string(data))
 	if err != nil {
-		return publicKey{}, fmt.Errorf("%s: %s: %w", envPublicKey, v, err)
+		return publicKey{}, fmt.Errorf("%s: %s: %w", setting.SignerPublicKey, v, err)
 	}
 	return pk, nil
 }

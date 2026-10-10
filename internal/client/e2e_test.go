@@ -16,13 +16,14 @@ import (
 	"testing"
 
 	"github.com/mitchelkuijpers/remote-git-commit-signing/internal/server"
+	"github.com/mitchelkuijpers/remote-git-commit-signing/internal/setting"
 	"github.com/mitchelkuijpers/remote-git-commit-signing/internal/signing"
 )
 
 // End-to-end (spec seam 3): the REAL git binary drives the built
 // git-remote-sign program, which talks to a real listener running the real
 // signer server. Nothing is faked except the exe.dev platform plumbing, whose
-// verified X-Exedev-Source-Vm identity the harness injects on ingress exactly
+// verified source-VM identity the harness injects on ingress exactly
 // as the transparent production proxy presents it.
 
 const (
@@ -92,8 +93,7 @@ func startServer(t *testing.T) *e2eServer {
 		t.Fatalf("NewSSHKeygenSigner: %v", err)
 	}
 
-	cfg := server.Config{
-		KeyPath:    keyPath,
+	cfg := server.HandlerConfig{
 		Committer:  server.Committer{Name: e2eName, Email: e2eEmail},
 		Allowlist:  server.Allowlist{e2eVMIdentity},
 		RatePerMin: 6000,
@@ -103,10 +103,11 @@ func startServer(t *testing.T) *e2eServer {
 	srv := server.New(signer, pubLine, cfg, logger)
 
 	// Simulate the exe.dev peer integration: the platform's authenticated proxy
-	// stamps the verified source-VM identity on ingress and no client can forge
-	// it. Authz then runs unchanged.
+	// stamps the platform-verified source-VM identity on ingress via the
+	// exported server helper and no client can forge it. Authz then runs
+	// unchanged.
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		r.Header.Set("X-Exedev-Source-Vm", e2eVMIdentity)
+		server.StampSourceVM(r.Header, e2eVMIdentity)
 		srv.ServeHTTP(w, r)
 	})
 	ts := httptest.NewServer(handler)
@@ -120,11 +121,11 @@ func startServer(t *testing.T) *e2eServer {
 func (s *e2eServer) clientEnv(t *testing.T, extra map[string]string) map[string]string {
 	t.Helper()
 	env := map[string]string{
-		"GIT_REMOTE_SIGNER_URL":        s.url,
-		"GIT_REMOTE_SIGNER_PUBLIC_KEY": s.pubKeyPath,
-		"HOME":                         t.TempDir(),
-		"GIT_CONFIG_GLOBAL":            os.DevNull,
-		"GIT_CONFIG_NOSYSTEM":          "1",
+		setting.SignerURL:       s.url,
+		setting.SignerPublicKey: s.pubKeyPath,
+		"HOME":                  t.TempDir(),
+		"GIT_CONFIG_GLOBAL":     os.DevNull,
+		"GIT_CONFIG_NOSYSTEM":   "1",
 	}
 	for k, v := range extra {
 		env[k] = v
@@ -407,12 +408,12 @@ func TestE2ESignerFailureLeavesNoCommitAndNoSig(t *testing.T) {
 
 	tmpDir := t.TempDir()
 	env := map[string]string{
-		"GIT_REMOTE_SIGNER_URL":        stub.URL,
-		"GIT_REMOTE_SIGNER_PUBLIC_KEY": pubKeyPath,
-		"HOME":                         t.TempDir(),
-		"GIT_CONFIG_GLOBAL":            os.DevNull,
-		"GIT_CONFIG_NOSYSTEM":          "1",
-		"TMPDIR":                       tmpDir,
+		setting.SignerURL:       stub.URL,
+		setting.SignerPublicKey: pubKeyPath,
+		"HOME":                  t.TempDir(),
+		"GIT_CONFIG_GLOBAL":     os.DevNull,
+		"GIT_CONFIG_NOSYSTEM":   "1",
+		"TMPDIR":                tmpDir,
 	}
 
 	repo := t.TempDir()

@@ -69,10 +69,11 @@ func run(ctx context.Context, getenv func(string) string, logger *slog.Logger) e
 		return fmt.Errorf("load signing key: %w", err)
 	}
 
+	handlerCfg := cfg.WithDefaults()
 	signer, err := signing.NewSSHKeygenSigner(signing.SSHKeygenConfig{
 		KeyPath:         cfg.KeyPath,
-		MaxPayloadBytes: cfg.MaxPayloadBytes,
-		Timeout:         cfg.SignTimeout,
+		MaxPayloadBytes: handlerCfg.MaxPayloadBytes,
+		Timeout:         handlerCfg.SignTimeout,
 	})
 	if err != nil {
 		return err
@@ -86,7 +87,7 @@ func run(ctx context.Context, getenv func(string) string, logger *slog.Logger) e
 	}
 
 	httpServer := &http.Server{
-		Handler:           server.New(signer, publicKey, cfg, logger),
+		Handler:           server.New(signer, publicKey, handlerCfg, logger),
 		ReadHeaderTimeout: readHeaderTimeout,
 		ReadTimeout:       readTimeout,
 		WriteTimeout:      writeTimeout,
