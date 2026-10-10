@@ -1,0 +1,9 @@
+# 0001: One `SIGNER_*` environment family across server and client
+
+The deployment interface used to be spelled in two name families that required a rename-mapping layer: operator-supplied `GIT_SIGNER_*` inputs written into a `SIGNER_*` env file by the installer, plus an unrelated `GIT_REMOTE_SIGNER_*` trio configuring the client — three spellings sharing knowledge of the same facts, with copies in the shell scripts, Go config code, docs tables, unit-file comments, and tests, and nothing compiler-checked holding them together (the systemd unit already drifted to `http://` while the Go code said `https://`). We unified everything into a single `SIGNER_*` family — installer inputs, runtime settings, and the client trio included — and dropped all backward compatibility: the deployment is young (one instance), so we chose name coherence over reachability of previously provisioned clients. Installer-only one-shot override knobs of `install-client.sh` (`GIT_REMOTE_SIGNER_BIN`, `_RELEASE_VERSION`, `_DOWNLOAD_BASE`, `_INSTALL_DIR`, `_CONFIG_DIR`, `_PROFILE`) deliberately stay outside the family; they are knobs of the installer itself, not the deployment interface, and renaming them buys no locality. A future architecture review should read this before re-suggesting a split: the old deliberate-looking prefix split is gone on purpose.
+
+## Consequences
+
+- `SIGNER_PUBLIC_URL` (server-side render input) and the client's `GIT_REMOTE_SIGNER_URL` collapse into one fact named `SIGNER_URL`, since one name for one fact was the point.
+- The env-name knowledge has a single owner (a leaf Go module both binaries consume); shell scripts and docs are asserted against it by test rather than generated.
+- Previously provisioned agent VMs (if any were missed) hold stale env names; re-running the client installer converges them.
