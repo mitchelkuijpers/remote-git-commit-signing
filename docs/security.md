@@ -36,7 +36,7 @@ workstation or GitLab account, and attacks on Git's own signing/verification cod
    the server by any other route (directly to the VM, a reverse proxy that does not
    authenticate, a stale DNS/IP path) carries no identity and is refused.
 2. **Server → client (signature integrity).** The client pins the trusted public key
-   in `GIT_REMOTE_SIGNER_PUBLIC_KEY` and verifies every returned signature
+   in `SIGNER_PUBLIC_KEY` and verifies every returned signature
    cryptographically against that pinned key before writing `.sig`. A broken,
    misconfigured, or hostile server cannot make an agent commit under a key the client
    does not trust.
@@ -117,7 +117,7 @@ integration), so the audience is account-scoped.
 
 ## What the pinned client key protects against
 
-`GIT_REMOTE_SIGNER_PUBLIC_KEY` is the client's independent source of truth:
+`SIGNER_PUBLIC_KEY` is the client's independent source of truth:
 
 - A **key-substitution attack**: a server that returns signatures from a different key
   (or from an attacker's key) is rejected, because the client's local
