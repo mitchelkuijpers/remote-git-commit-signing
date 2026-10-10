@@ -32,9 +32,9 @@ On a fresh signer VM, provide the required configuration and run the installer:
 
 ```sh
 sudo env \
-  GIT_SIGNER_COMMITTER_NAME='Your Name' \
-  GIT_SIGNER_COMMITTER_EMAIL='you@example.com' \
-  GIT_SIGNER_ALLOWLIST='agent-*,builder-1' \
+  SIGNER_COMMITTER_NAME='Your Name' \
+  SIGNER_COMMITTER_EMAIL='you@example.com' \
+  SIGNER_ALLOWLIST='agent-*,builder-1' \
   deploy/install-server.sh
 ```
 
@@ -115,7 +115,7 @@ committer email matches an email verified on the registered account. Keep
 
 Agent VMs do not fetch the public key from the signer and trust it. They pin it:
 
-- `GIT_REMOTE_SIGNER_PUBLIC_KEY` on each agent VM (or baked into the VM
+- `SIGNER_PUBLIC_KEY` on each agent VM (or baked into the VM
   image / provisioning) must contain the same line that is registered with
   GitLab.
 - `GET /v1/public-key` is informational only. The client compares what it
@@ -192,7 +192,7 @@ when GitLab *and every client* trust the new key.
    [Operating the service](#operating-the-service)).
 
 3. Register the new public key with GitLab (Signing-only), exactly as above.
-4. Update the pinned `GIT_REMOTE_SIGNER_PUBLIC_KEY` on every agent VM / image,
+4. Update the pinned `SIGNER_PUBLIC_KEY` on every agent VM / image,
    and re-provision (the provisioning scripts install the pinned key).
 5. Verify a real signing round-trip end to end: on an agent VM run
    `git commit --allow-empty -m "rotation check"` and confirm the commit is

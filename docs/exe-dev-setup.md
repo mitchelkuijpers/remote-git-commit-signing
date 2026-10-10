@@ -22,9 +22,9 @@ On the signer VM:
 
 ```bash
 sudo env \
-  GIT_SIGNER_COMMITTER_NAME='Your Name' \
-  GIT_SIGNER_COMMITTER_EMAIL='you@example.com' \
-  GIT_SIGNER_ALLOWLIST='agent-*' \
+  SIGNER_COMMITTER_NAME='Your Name' \
+  SIGNER_COMMITTER_EMAIL='you@example.com' \
+  SIGNER_ALLOWLIST='agent-*' \
   deploy/install-server.sh
 ```
 
@@ -40,7 +40,7 @@ The installer also cross-compiles the client for both Linux architectures and
 installs it, with `install-client.sh`, into `SIGNER_DIST_DIR`
 (default `/usr/local/lib/git-signer/dist`). The server serves these at
 `/v1/client/...` so agent VMs can bootstrap with nothing but the signer URL
-(skip with `GIT_SIGNER_SKIP_DIST=1`). Because server and client come from the
+(skip with `SIGNER_SKIP_DIST=1`). Because server and client come from the
 same source tree in the same installer run, the served client cannot silently
 skew from the server.
 
@@ -124,14 +124,14 @@ from the signer's `/v1/client/...` endpoints, and execs the installer. The
 bootstrap URL is also linked on the signer's landing page (`GET /`).
 
 To provision without the bootstrap (for example a signer with
-`GIT_SIGNER_SKIP_DIST=1`), run `deploy/install-client.sh` from a repo checkout
+`SIGNER_SKIP_DIST=1`), run `deploy/install-client.sh` from a repo checkout
 with the same values exported by hand:
 
 ```bash
-GIT_REMOTE_SIGNER_URL=https://git-signer.int.exe.xyz \
-GIT_REMOTE_SIGNER_PUBLIC_KEY=<public key line or file> \
-GIT_SIGNER_COMMITTER_NAME='Your Name' \
-GIT_SIGNER_COMMITTER_EMAIL='you@example.com' \
+SIGNER_URL=https://git-signer.int.exe.xyz \
+SIGNER_PUBLIC_KEY=<public key line or file> \
+SIGNER_COMMITTER_NAME='Your Name' \
+SIGNER_COMMITTER_EMAIL='you@example.com' \
   deploy/install-client.sh
 ```
 

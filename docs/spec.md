@@ -137,7 +137,7 @@ unsigned fallbacks.
    signing payload contains no trustworthy repo identity, so enforcement is VM-level
    (documented residual risk).
 
-9. **Client configuration**: `GIT_REMOTE_SIGNER_URL` + `GIT_REMOTE_SIGNER_PUBLIC_KEY`
+9. **Client configuration**: `SIGNER_URL` + `SIGNER_PUBLIC_KEY`
    (pinned key), configurable timeout with sane default, HTTP timeouts, response size
    limits, no retry storms, no payload logging, and **never** an unsigned fallback.
 
