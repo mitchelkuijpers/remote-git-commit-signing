@@ -104,12 +104,25 @@ func fetchSignature(cfg config, payload []byte) ([]byte, error) {
 	req.Header.Set("Content-Type", "application/octet-stream")
 	req.ContentLength = int64(len(payload))
 
-	client := &http.Client{Timeout: cfg.timeout}
+	// Do not follow redirects: for 301/302 Go would silently downgrade the
+	// POST to a GET and the caller would see an opaque 405. A redirect here
+	// means a misconfigured signer URL (classically http:// on an edge that
+	// redirects to https://), so surface it with a specific message instead.
+	client := &http.Client{
+		Timeout: cfg.timeout,
+		CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("request signature from %s: %w", endpoint, err)
 	}
 	defer resp.Body.Close()
+
+	if resp.StatusCode >= 300 && resp.StatusCode < 400 {
+		return nil, fmt.Errorf("signer redirected the signing request (HTTP %d to %q): update GIT_REMOTE_SIGNER_URL to the redirect target — note the exe.dev peer integration uses https://, not http://", resp.StatusCode, resp.Header.Get("Location"))
+	}
 
 	body, err := io.ReadAll(io.LimitReader(resp.Body, cfg.maxResponseBytes+1))
 	if err != nil {

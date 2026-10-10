@@ -264,6 +264,40 @@ func TestSignRejectsUnreachableServer(t *testing.T) {
 	expectNoSig(t, bufferFile)
 }
 
+func TestSignRefusesRedirect(t *testing.T) {
+	keyPath := newTestKey(t)
+	pubLine := publicKeyLine(t, keyPath)
+
+	// A redirecting edge (classically http:// -> https:// on exe.dev) must not
+	// be followed: Go would downgrade the sign POST to a GET and report an
+	// opaque 405. The client must name the redirect instead.
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.Copy(io.Discard, r.Body)
+		w.Header().Set("Location", "https://git-signer.int.exe.xyz/v1/sign")
+		w.WriteHeader(http.StatusMovedPermanently)
+	}))
+	t.Cleanup(ts.Close)
+
+	dir := t.TempDir()
+	keyFile := filepath.Join(dir, "signing.pub")
+	writeFile(t, keyFile, pubLine+"\n")
+	bufferFile := filepath.Join(dir, "buffer")
+	writeFile(t, bufferFile, "payload\n")
+
+	var stderr bytes.Buffer
+	code := runClient(signArgv(keyFile, bufferFile), env(map[string]string{
+		"GIT_REMOTE_SIGNER_URL":        ts.URL,
+		"GIT_REMOTE_SIGNER_PUBLIC_KEY": pubLine,
+	}), &stderr)
+	if code == 0 {
+		t.Fatal("Run exit = 0, want non-zero for a redirecting signer")
+	}
+	if !strings.Contains(stderr.String(), "redirected") {
+		t.Fatalf("stderr does not name the redirect: %q", stderr.String())
+	}
+	expectNoSig(t, bufferFile)
+}
+
 func TestSignRejectsGarbageSignatureAndRemovesStaleSig(t *testing.T) {
 	keyPath := newTestKey(t)
 	pubLine := publicKeyLine(t, keyPath)

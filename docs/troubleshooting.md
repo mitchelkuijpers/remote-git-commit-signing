@@ -7,8 +7,8 @@ semantics you need to read test output and CI logs.
 
 ```bash
 journalctl -u git-signer.service -n 50 --no-pager     # on the signer VM
-curl -s http://git-signer.int.exe.xyz/healthz          # from the agent VM (liveness)
-curl -s http://git-signer.int.exe.xyz/readyz           # readiness: 503 until the key loads
+curl -s https://git-signer.int.exe.xyz/healthz          # from the agent VM (liveness)
+curl -s https://git-signer.int.exe.xyz/readyz           # readiness: 503 until the key loads
 ```
 
 If `readyz` is not `200`, signing cannot work: the key is not loaded. See
@@ -82,7 +82,7 @@ fatal: failed to write commit object
 Causes and fixes, in order:
 
 1. `GIT_REMOTE_SIGNER_URL` is wrong or points at a localhost/non-peer address. It must
-   be the exe.dev peer URL (`http://git-signer.int.exe.xyz`) or a proxy that stamps the
+   be the exe.dev peer URL (`https://git-signer.int.exe.xyz`) or a proxy that stamps the
    platform identity. Check with `curl -s "$GIT_REMOTE_SIGNER_URL/healthz"`.
 2. The peer integration is not attached to this VM (missing `agent` tag, or the VM was
    attached to neither tag nor name). See [exe-dev-setup.md](exe-dev-setup.md).
@@ -225,6 +225,13 @@ install-client: error: refusing to configure a client with a key the signer does
 The signer currently holds a different key than the one being pinned. Either the pin
 is stale (a rotation happened — update `GIT_REMOTE_SIGNER_PUBLIC_KEY` and re-run) or
 the URL points at the wrong signer. Never "fix" this by removing the check.
+
+If the `server:` line prints HTML (`<a href="https://…">Moved</a>`) instead of a
+fingerprint, the URL is `http://…int.exe.xyz` and the edge 301-redirected the key
+fetch to `https://`. Switch to the `https://` signer URL and re-run. Current
+installers and `install.sh` follow the redirect and default to `https://`, so this
+only bites older clients; likewise `git-remote-sign` now refuses a redirecting
+signer outright instead of following it into an opaque failure.
 
 **3. The server returns a signature that fails local verification:**
 

@@ -188,13 +188,17 @@ fi
 awk 'NF >= 2 { print $1 " " $2; exit }' "$WORK/pinned.line" >"$WORK/pinned.id"
 
 # 3. Reachability, then a hard cross-check of the pinned key.
+# Redirects are followed (-L): the exe.dev edge 301s http->https, and without
+# it healthz passes on the redirect itself while the key fetching compares
+# against the redirect's HTML body. The cross-check below still pins on the
+# final key content, so following a hostile redirect can only fail closed.
 echo "==> checking signer reachability at $url/healthz" >&2
-if ! curl -fsS --max-time 10 "$url/healthz" >/dev/null 2>&1; then
+if ! curl -fsSL --max-time 10 "$url/healthz" >/dev/null 2>&1; then
 	die "signer is not reachable at $url (GET /healthz failed). Check GIT_REMOTE_SIGNER_URL, that the signer VM is running, and that the exe.dev peer integration is attached to this VM."
 fi
 
 echo "==> cross-checking the pinned key against $url/v1/public-key" >&2
-if ! curl -fsS --max-time 10 "$url/v1/public-key" >"$WORK/remote.pub" 2>"$WORK/remote.err"; then
+if ! curl -fsSL --max-time 10 "$url/v1/public-key" >"$WORK/remote.pub" 2>"$WORK/remote.err"; then
 	cat "$WORK/remote.err" >&2 2>/dev/null || true
 	die "could not fetch the server public key from $url/v1/public-key; refusing to configure a client whose key cannot be cross-checked."
 fi
