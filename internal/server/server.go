@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/mitchelkuijpers/remote-git-commit-signing/internal/signing"
+	"github.com/mitchelkuijpers/remote-git-commit-signing/internal/wire"
 )
 
 // Server is the HTTP handler set of git-signer-server.
@@ -28,10 +29,10 @@ type Server struct {
 	// committer is the pinned identity a commit must name to be signed.
 	committer Committer
 	// distDir is the client-distribution directory (empty disables
-	// /v1/client/... and /install.sh); publicURL renders into the bootstrap
+	// /v1/client/... and /install.sh); signerURL renders into the bootstrap
 	// script and landing page.
 	distDir   string
-	publicURL string
+	signerURL string
 	logger    *slog.Logger
 	mux       http.Handler
 	allowlist Allowlist
@@ -43,11 +44,17 @@ type Server struct {
 
 // New builds the HTTP handler. publicKey is the derived public signing key; it
 // is empty when no key is loaded, which makes the server report not-ready.
-func New(signer signing.Signer, publicKey string, cfg Config, logger *slog.Logger) *Server {
-	cfg = cfg.withDefaults()
+//
+// cfg is defaulted through withDefaults: an explicitly set cap, timeout, or
+// URL is preserved, and a zero field can never produce an unbounded payload
+// cap or an instantly-deadline signing request. Config.WithDefaults applies
+// the same operation at the process seam, so callers get one interface
+// whether they load from the environment or construct the config directly.
+func New(signer signing.Signer, publicKey string, cfg HandlerConfig, logger *slog.Logger) *Server {
 	if logger == nil {
 		logger = slog.Default()
 	}
+	cfg = cfg.withDefaults()
 
 	s := &Server{
 		signer:      signer,
@@ -56,7 +63,7 @@ func New(signer signing.Signer, publicKey string, cfg Config, logger *slog.Logge
 		signTimeout: cfg.SignTimeout,
 		committer:   cfg.Committer,
 		distDir:     cfg.DistDir,
-		publicURL:   cfg.PublicURL,
+		signerURL:   cfg.SignerURL,
 		logger:      logger,
 		allowlist:   cfg.Allowlist,
 		limiter:     newRateLimiter(cfg.RatePerMin, cfg.RateBurst),
@@ -64,12 +71,12 @@ func New(signer signing.Signer, publicKey string, cfg Config, logger *slog.Logge
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /{$}", s.handleLandingPage)
-	mux.HandleFunc("POST /v1/sign", s.withAuthorization(s.handleSign))
-	mux.HandleFunc("GET /v1/public-key", s.handlePublicKey)
-	mux.HandleFunc("GET /install.sh", s.handleInstallScript)
-	mux.HandleFunc("GET /v1/client/{name}", s.handleClientFile)
-	mux.HandleFunc("GET /healthz", s.handleHealthz)
-	mux.HandleFunc("GET /readyz", s.handleReadyz)
+	mux.HandleFunc("POST "+wire.SignPath, s.withAuthorization(s.handleSign))
+	mux.HandleFunc("GET "+wire.PublicKeyPath, s.handlePublicKey)
+	mux.HandleFunc("GET "+wire.InstallScriptPath, s.handleInstallScript)
+	mux.HandleFunc("GET "+wire.ClientFilesPath+"{name}", s.handleClientFile)
+	mux.HandleFunc("GET "+wire.HealthzPath, s.handleHealthz)
+	mux.HandleFunc("GET "+wire.ReadyzPath, s.handleReadyz)
 	s.mux = withRequestID(mux)
 	return s
 }
@@ -95,9 +102,6 @@ func (s *Server) handleReadyz(w http.ResponseWriter, _ *http.Request) {
 	}
 	writeText(w, http.StatusOK, "ok")
 }
-
-// contentTypeSSHSig is the response media type for a raw SSHSIG signature.
-const contentTypeSSHSig = "application/vnd.sshsig"
 
 // handlePublicKey serves the derived public signing key. It is informational:
 // clients pin the key and must not blindly trust a fetched one.
@@ -173,7 +177,7 @@ func (s *Server) handleSign(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	w.Header().Set("Content-Type", contentTypeSSHSig)
+	w.Header().Set("Content-Type", wire.ContentTypeSSHSig)
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(sig)

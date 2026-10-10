@@ -11,6 +11,9 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+
+	"github.com/mitchelkuijpers/remote-git-commit-signing/internal/setting"
+	"github.com/mitchelkuijpers/remote-git-commit-signing/internal/wire"
 )
 
 // Run executes the git-remote-sign program and returns its exit code.
@@ -66,7 +69,7 @@ func runSign(inv invocation, getenv func(string) string) error {
 		return err
 	}
 	if !requested.equal(cfg.pinned) {
-		return fmt.Errorf("signing key %s does not match the pinned %s key", inv.keyFile, envPublicKey)
+		return fmt.Errorf("signing key %s does not match the pinned %s key", inv.keyFile, setting.SignerPublicKey)
 	}
 
 	payload, err := os.ReadFile(inv.bufferFile)
@@ -92,7 +95,7 @@ func runSign(inv invocation, getenv func(string) string) error {
 // fetchSignature POSTs the exact payload bytes to the signer and returns the
 // raw SSHSIG response, bounded by the configured response size cap.
 func fetchSignature(cfg config, payload []byte) ([]byte, error) {
-	endpoint := cfg.signURL + "/v1/sign"
+	endpoint := cfg.signURL + wire.SignPath
 
 	ctx, cancel := context.WithTimeout(context.Background(), cfg.timeout)
 	defer cancel()
@@ -101,7 +104,7 @@ func fetchSignature(cfg config, payload []byte) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("build signing request: %w", err)
 	}
-	req.Header.Set("Content-Type", "application/octet-stream")
+	req.Header.Set("Content-Type", wire.ContentTypeOctetStream)
 	req.ContentLength = int64(len(payload))
 
 	// Do not follow redirects: for 301/302 Go would silently downgrade the
@@ -121,7 +124,7 @@ func fetchSignature(cfg config, payload []byte) ([]byte, error) {
 	defer resp.Body.Close()
 
 	if resp.StatusCode >= 300 && resp.StatusCode < 400 {
-		return nil, fmt.Errorf("signer redirected the signing request (HTTP %d to %q): update GIT_REMOTE_SIGNER_URL to the redirect target — note the exe.dev peer integration uses https://, not http://", resp.StatusCode, resp.Header.Get("Location"))
+		return nil, fmt.Errorf("signer redirected the signing request (HTTP %d to %q): update %s to the redirect target — note the exe.dev peer integration uses https://, not http://", resp.StatusCode, resp.Header.Get("Location"), setting.SignerURL)
 	}
 
 	body, err := io.ReadAll(io.LimitReader(resp.Body, cfg.maxResponseBytes+1))
