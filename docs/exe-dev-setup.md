@@ -91,15 +91,15 @@ ssh exe.dev tag my-vm agent
 A VM attached to the integration reaches the signer at:
 
 ```text
-http://git-signer.int.exe.xyz
+https://git-signer.int.exe.xyz
 ```
 
 That hostname always resolves through the authenticated peer proxy; the port is the
 target VM's web port (`8000` by default). Check it from the agent VM:
 
 ```bash
-curl -s http://git-signer.int.exe.xyz/healthz          # -> ok
-curl -s http://git-signer.int.exe.xyz/v1/public-key    # -> the public signing key
+curl -s https://git-signer.int.exe.xyz/healthz          # -> ok
+curl -s https://git-signer.int.exe.xyz/v1/public-key    # -> the public signing key
 ```
 
 Reaching the signer any other way (for example `https://SIGNER_VM.exe.xyz`
@@ -114,7 +114,7 @@ Provisioning a new agent VM is a tag and one command:
 # once per VM, if it does not already carry the tag
 ssh exe.dev tag "$(hostname)" agent
 
-curl -fsSL http://git-signer.int.exe.xyz/install.sh | sh
+curl -fsSL https://git-signer.int.exe.xyz/install.sh | sh
 ```
 
 `/install.sh` is rendered by the signer with the pinned configuration baked
@@ -128,7 +128,7 @@ To provision without the bootstrap (for example a signer with
 with the same values exported by hand:
 
 ```bash
-GIT_REMOTE_SIGNER_URL=http://git-signer.int.exe.xyz \
+GIT_REMOTE_SIGNER_URL=https://git-signer.int.exe.xyz \
 GIT_REMOTE_SIGNER_PUBLIC_KEY=<public key line or file> \
 GIT_SIGNER_COMMITTER_NAME='Your Name' \
 GIT_SIGNER_COMMITTER_EMAIL='you@example.com' \

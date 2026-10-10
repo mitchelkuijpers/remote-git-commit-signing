@@ -121,7 +121,7 @@ Attach the exe.dev peer integration to the VM (or, better, to a tag so every fut
 VM inherits it — see [docs/exe-dev-setup.md](docs/exe-dev-setup.md)), then run one command:
 
 ```bash
-curl -fsSL http://git-signer.int.exe.xyz/install.sh | sh
+curl -fsSL https://git-signer.int.exe.xyz/install.sh | sh
 ```
 
 The signer renders `/install.sh` with the pinned configuration baked in (URL, public key,
@@ -131,7 +131,7 @@ endpoints and runs it. To provision by hand instead (e.g. a client platform the 
 doesn't serve), export the same values and run the installer from a repo checkout:
 
 ```bash
-GIT_REMOTE_SIGNER_URL=http://git-signer.int.exe.xyz \
+GIT_REMOTE_SIGNER_URL=https://git-signer.int.exe.xyz \
 GIT_REMOTE_SIGNER_PUBLIC_KEY=/var/lib/git-signer/signing_key.pub \
 GIT_SIGNER_COMMITTER_NAME='Your Name' \
 GIT_SIGNER_COMMITTER_EMAIL='you@example.com' \
@@ -289,7 +289,7 @@ the sign/verify request flows.
 required environment variables and an optional timeout:
 
 ```bash
-export GIT_REMOTE_SIGNER_URL=http://git-signer.int.exe.xyz   # the signer base URL
+export GIT_REMOTE_SIGNER_URL=https://git-signer.int.exe.xyz   # the signer base URL
 export GIT_REMOTE_SIGNER_PUBLIC_KEY="$HOME/.config/git-remote-signer/signing.pub"
 export GIT_REMOTE_SIGN_TIMEOUT=10s   # optional; default 10s
 ```

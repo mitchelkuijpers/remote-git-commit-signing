@@ -38,8 +38,12 @@ const (
 
 // DefaultPublicURL is the signer base URL rendered into the client bootstrap
 // script when SIGNER_PUBLIC_URL is unset: the canonical exe.dev
-// peer-integration hostname.
-const DefaultPublicURL = "http://git-signer.int.exe.xyz"
+// peer-integration hostname. It is https, not http: the int.exe.xyz edge
+// 301-redirects http to https, and a redirect in front of key fetches or the
+// sign POST breaks clients that do not follow redirects (or follow them by
+// downgrading POST to GET). TLS terminates at the edge; peer identity
+// injection is unaffected.
+const DefaultPublicURL = "https://git-signer.int.exe.xyz"
 
 // Committer is the pinned Git committer identity a commit must name to be
 // signed. Both fields are required with no default.

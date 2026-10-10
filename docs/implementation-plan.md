@@ -316,7 +316,7 @@ Replace `SIGNER_VM` with the actual VM name.
 Agent VMs with the `agent` tag can then reach the service through:
 
 ```text
-http://git-signer.int.exe.xyz
+https://git-signer.int.exe.xyz
 ```
 
 The integration authenticates requests and provides the verified caller VM identity.
@@ -396,7 +396,7 @@ Make the client configuration extremely simple.
 The following environment variables should be sufficient:
 
 ```bash
-GIT_REMOTE_SIGNER_URL=http://git-signer.int.exe.xyz
+GIT_REMOTE_SIGNER_URL=https://git-signer.int.exe.xyz
 GIT_REMOTE_SIGNER_PUBLIC_KEY=$HOME/.config/git-remote-signer/signing.pub
 ```
 

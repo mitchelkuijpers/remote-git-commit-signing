@@ -13,7 +13,7 @@ Any of these gives you the same line (`ssh-ed25519 AAAA... git-signer ...`):
 
 ```bash
 cat /var/lib/git-signer/signing_key.pub     # on the signer VM
-curl -s http://git-signer.int.exe.xyz/      # landing page: key + fingerprint + steps
+curl -s https://git-signer.int.exe.xyz/      # landing page: key + fingerprint + steps
 ssh-keygen -lf /var/lib/git-signer/signing_key.pub   # fingerprint, to verify you have the right key
 ```
 

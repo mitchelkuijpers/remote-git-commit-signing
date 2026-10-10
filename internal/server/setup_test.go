@@ -56,7 +56,7 @@ func TestInstallScriptRendersPinnedConfig(t *testing.T) {
 	// The script must carry every pinned value the installer needs, so the
 	// agent VM operator runs zero configuration by hand.
 	for _, want := range []string{
-		`base='http://git-signer.int.exe.xyz'`,
+		`base='https://git-signer.int.exe.xyz'`,
 		"GIT_REMOTE_SIGNER_PUBLIC_KEY='" + strings.TrimSpace(publicKey) + "'",
 		`GIT_SIGNER_COMMITTER_NAME='Jane Dev'`,
 		`GIT_SIGNER_COMMITTER_EMAIL='jane@example.com'`,
@@ -181,7 +181,7 @@ func TestLandingPageShowsBootstrapCommand(t *testing.T) {
 
 	_, body := get(t, ts.URL+"/")
 	rendered := renderBody(body)
-	if !strings.Contains(rendered, "curl -fsSL http://git-signer.int.exe.xyz/install.sh | sh") {
+	if !strings.Contains(rendered, "curl -fsSL https://git-signer.int.exe.xyz/install.sh | sh") {
 		t.Fatalf("landing page does not show the client bootstrap command\nbody: %s", rendered)
 	}
 }

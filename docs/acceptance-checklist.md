@@ -83,7 +83,7 @@ attachment; see [exe-dev-setup.md](exe-dev-setup.md)), then run the signer-serve
 bootstrap:
 
 ```bash
-curl -fsSL http://git-signer.int.exe.xyz/install.sh | sh
+curl -fsSL https://git-signer.int.exe.xyz/install.sh | sh
 ```
 
 Expected: the installer reaches the signer, cross-checks the pinned key, installs

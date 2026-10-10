@@ -287,7 +287,7 @@ tmp_env=$fs_env_file.tmp
 	if [ -n "${GIT_SIGNER_PUBLIC_URL:-}" ]; then
 		echo "SIGNER_PUBLIC_URL=$GIT_SIGNER_PUBLIC_URL"
 	else
-		echo "#SIGNER_PUBLIC_URL=http://git-signer.int.exe.xyz"
+		echo "#SIGNER_PUBLIC_URL=https://git-signer.int.exe.xyz"
 	fi
 	if [ -n "${GIT_SIGNER_PORT:-}" ]; then
 		echo "SIGNER_PORT=$GIT_SIGNER_PORT"
@@ -374,7 +374,7 @@ cat "$fs_key_path.pub"
 echo "" >&2
 if [ "$skip_dist" != "1" ]; then
 	echo "client bootstrap (on any attached agent VM):" >&2
-	echo "  curl -fsSL ${GIT_SIGNER_PUBLIC_URL:-http://git-signer.int.exe.xyz}/install.sh | sh" >&2
+	echo "  curl -fsSL ${GIT_SIGNER_PUBLIC_URL:-https://git-signer.int.exe.xyz}/install.sh | sh" >&2
 	echo "" >&2
 fi
 echo "logs:      journalctl -u $UNIT_NAME -f" >&2
