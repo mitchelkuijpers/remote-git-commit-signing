@@ -7,13 +7,18 @@ import (
 	"path"
 	"strings"
 	"time"
+
+	"github.com/mitchelkuijpers/remote-git-commit-signing/internal/wire"
 )
 
-// headerSourceVM is the exe.dev peer-integration header carrying the verified
-// source-VM identity. The platform's authenticated proxy sets it in
-// production; a client cannot forge it through the public route. Tests set it
-// directly, exactly as the transparent platform presents it.
-const headerSourceVM = "X-Exedev-Source-Vm"
+// StampSourceVM stamps the platform-verified source-VM identity onto a request.
+// In production only the exe.dev authenticated peer proxy may set
+// wire.SourceVMHeader, and nothing else ever should; this helper exists so the
+// test harnesses can present requests exactly as the transparent platform
+// does. The signing middleware trusts a stamped identity as platform-verified.
+func StampSourceVM(h http.Header, vm string) {
+	h.Set(wire.SourceVMHeader, vm)
+}
 
 // Outcome values recorded in the audit log and counters.
 const (
@@ -71,7 +76,7 @@ func (s *Server) withAuthorization(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
 		d := &decision{
-			vm:        strings.TrimSpace(r.Header.Get(headerSourceVM)),
+			vm:        strings.TrimSpace(r.Header.Get(wire.SourceVMHeader)),
 			requestID: requestIDFrom(r.Context()),
 		}
 		r = r.WithContext(context.WithValue(r.Context(), decisionKey{}, d))

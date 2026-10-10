@@ -45,7 +45,7 @@ func newSigner(t *testing.T) (signing.Signer, string) {
 	return newSignerForKey(t, newTestKey(t))
 }
 
-func newTestHTTPServer(t *testing.T, signer signing.Signer, publicKey string, cfg server.Config) *httptest.Server {
+func newTestHTTPServer(t *testing.T, signer signing.Signer, publicKey string, cfg server.HandlerConfig) *httptest.Server {
 	t.Helper()
 	ts := httptest.NewServer(server.New(signer, publicKey, cfg, discardLogger()))
 	t.Cleanup(ts.Close)
@@ -68,7 +68,7 @@ func get(t *testing.T, url string) (*http.Response, string) {
 
 func TestHealthzAlwaysAlive(t *testing.T) {
 	// No key and no signer configured: liveness must still succeed.
-	ts := newTestHTTPServer(t, nil, "", server.Config{})
+	ts := newTestHTTPServer(t, nil, "", server.HandlerConfig{})
 
 	resp, body := get(t, ts.URL+"/healthz")
 	if resp.StatusCode != http.StatusOK {
@@ -80,15 +80,14 @@ func TestHealthzAlwaysAlive(t *testing.T) {
 }
 
 func TestReadyzNotReadyWithoutKey(t *testing.T) {
-	const keyPath = "/var/lib/git-signer/signing_key"
-	ts := newTestHTTPServer(t, nil, "", server.Config{KeyPath: keyPath})
+	ts := newTestHTTPServer(t, nil, "", server.HandlerConfig{})
 
 	resp, body := get(t, ts.URL+"/readyz")
 	if resp.StatusCode != http.StatusServiceUnavailable {
 		t.Fatalf("GET /readyz without key status = %d, want 503", resp.StatusCode)
 	}
-	if strings.Contains(body, keyPath) || strings.Contains(body, "PRIVATE KEY") {
-		t.Fatalf("GET /readyz leaked key material or config: %q", body)
+	if strings.Contains(body, "PRIVATE KEY") {
+		t.Fatalf("GET /readyz leaked key material: %q", body)
 	}
 }
 
@@ -123,7 +122,7 @@ func TestPublicKeyServesDerivedKey(t *testing.T) {
 }
 
 func TestPublicKeyNotServedWithoutKey(t *testing.T) {
-	ts := newTestHTTPServer(t, nil, "", server.Config{})
+	ts := newTestHTTPServer(t, nil, "", server.HandlerConfig{})
 
 	resp, body := get(t, ts.URL+"/v1/public-key")
 	if resp.StatusCode != http.StatusServiceUnavailable {
@@ -176,14 +175,14 @@ func postSign(t *testing.T, baseURL string, payload []byte) (*http.Response, str
 // signConfig.
 const testVM = "test-vm"
 
-// signConfig returns a server config that admits testVM to POST /v1/sign and
+// signConfig returns a handler config that admits testVM to POST /v1/sign and
 // pins the committer identity. Authorization is fail-closed (ticket #7): tests
 // that exercise signing must configure an allowlist and carry an identity.
 // Commit validation (ticket #6) additionally requires the payload to name the
 // pinned committer. The rate budget is raised well above what a single test
 // needs, so only the dedicated rate-limit test observes throttling.
-func signConfig() server.Config {
-	return server.Config{
+func signConfig() server.HandlerConfig {
+	return server.HandlerConfig{
 		Allowlist:  server.Allowlist{testVM},
 		Committer:  server.Committer{Name: testCommitterName, Email: testCommitterEmail},
 		RatePerMin: server.DefaultRatePerMin,
@@ -218,7 +217,7 @@ func TestSignRejectsUnreadableBody(t *testing.T) {
 	h := server.New(signer, publicKey, signConfig(), discardLogger())
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/sign", failingReader{err: errors.New("client read failure sentinel")})
-	req.Header.Set("X-Exedev-Source-Vm", testVM)
+	server.StampSourceVM(req.Header, testVM)
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 
@@ -296,7 +295,7 @@ func TestResponsesNeverLeakPrivateKey(t *testing.T) {
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/v1/sign", failingReader{err: errors.New("boom")})
-	req.Header.Set("X-Exedev-Source-Vm", testVM)
+	server.StampSourceVM(req.Header, testVM)
 	server.New(signer, publicKey, signConfig(), discardLogger()).ServeHTTP(rec, req)
 	assertNoKeyMaterial(t, rec.Body.String())
 }

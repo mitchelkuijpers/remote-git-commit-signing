@@ -60,7 +60,7 @@ func sshKeygenFingerprint(t *testing.T, publicKeyPath string) string {
 func TestLandingPageShowsPublicKeyAndFingerprint(t *testing.T) {
 	keyPath := newTestKey(t)
 	signer, publicKey := newSignerForKey(t, keyPath)
-	ts := newTestHTTPServer(t, signer, publicKey, server.Config{})
+	ts := newTestHTTPServer(t, signer, publicKey, server.HandlerConfig{})
 
 	resp, body := get(t, ts.URL+"/")
 	if resp.StatusCode != http.StatusOK {
@@ -81,7 +81,7 @@ func TestLandingPageShowsPublicKeyAndFingerprint(t *testing.T) {
 
 func TestLandingPageContentTypeIsHTML(t *testing.T) {
 	signer, publicKey := newSigner(t)
-	ts := newTestHTTPServer(t, signer, publicKey, server.Config{})
+	ts := newTestHTTPServer(t, signer, publicKey, server.HandlerConfig{})
 
 	resp, body := get(t, ts.URL+"/")
 	if ct := resp.Header.Get("Content-Type"); !strings.HasPrefix(ct, "text/html") {
@@ -93,30 +93,26 @@ func TestLandingPageContentTypeIsHTML(t *testing.T) {
 }
 
 func TestLandingPageRendersNoConfigValues(t *testing.T) {
-	keyPath := newTestKey(t)
-	signer, publicKey := newSignerForKey(t, keyPath)
-	const port = 49152
-	ts := newTestHTTPServer(t, signer, publicKey, server.Config{
-		KeyPath:   keyPath,
-		Port:      port,
+	// The handler never sees the key path or listen port (they live on the
+	// process Config only), so this test can only prove the values that do
+	// travel into the handler stay off the page.
+	signer, publicKey := newSigner(t)
+	ts := newTestHTTPServer(t, signer, publicKey, server.HandlerConfig{
 		Committer: server.Committer{Name: "Secret Committer", Email: "secret-committer@example.com"},
 	})
 
 	_, body := get(t, ts.URL+"/")
 	rendered := renderBody(body)
-	for _, secret := range []string{keyPath, "Secret Committer", "secret-committer@example.com", "PRIVATE KEY"} {
+	for _, secret := range []string{"Secret Committer", "secret-committer@example.com", "PRIVATE KEY"} {
 		if strings.Contains(rendered, secret) {
 			t.Fatalf("GET / leaked configuration value %q: %s", secret, body)
 		}
-	}
-	if strings.Contains(rendered, "49152") {
-		t.Fatalf("GET / leaked the configured port: %s", body)
 	}
 }
 
 func TestLandingPageIncludesGitLabInstructions(t *testing.T) {
 	signer, publicKey := newSigner(t)
-	ts := newTestHTTPServer(t, signer, publicKey, server.Config{})
+	ts := newTestHTTPServer(t, signer, publicKey, server.HandlerConfig{})
 
 	_, body := get(t, ts.URL+"/")
 	for _, want := range []string{"GitLab", "SSH Keys", "Signing", "verify-commit"} {
@@ -127,7 +123,7 @@ func TestLandingPageIncludesGitLabInstructions(t *testing.T) {
 }
 
 func TestLandingPageNotServedWithoutKey(t *testing.T) {
-	ts := newTestHTTPServer(t, nil, "", server.Config{})
+	ts := newTestHTTPServer(t, nil, "", server.HandlerConfig{})
 
 	resp, body := get(t, ts.URL+"/")
 	if resp.StatusCode != http.StatusServiceUnavailable {
@@ -138,7 +134,7 @@ func TestLandingPageNotServedWithoutKey(t *testing.T) {
 func TestLandingPageEscapesPublicKeyComment(t *testing.T) {
 	signer, publicKey := newSigner(t)
 	hostile := publicKey + ` <script>alert("x")</script>`
-	ts := newTestHTTPServer(t, signer, hostile, server.Config{})
+	ts := newTestHTTPServer(t, signer, hostile, server.HandlerConfig{})
 
 	_, body := get(t, ts.URL+"/")
 	if strings.Contains(body, "<script>") {
@@ -151,7 +147,7 @@ func TestLandingPageEscapesPublicKeyComment(t *testing.T) {
 
 func TestLandingPageHasNoJavaScriptOrExternalAssets(t *testing.T) {
 	signer, publicKey := newSigner(t)
-	ts := newTestHTTPServer(t, signer, publicKey, server.Config{})
+	ts := newTestHTTPServer(t, signer, publicKey, server.HandlerConfig{})
 
 	_, body := get(t, ts.URL+"/")
 	for _, banned := range []string{"<script", "javascript:", "src=", `href="http`, "href='http"} {
@@ -163,7 +159,7 @@ func TestLandingPageHasNoJavaScriptOrExternalAssets(t *testing.T) {
 
 func TestLandingPageFailsCleanlyOnMalformedKey(t *testing.T) {
 	signer, _ := newSigner(t)
-	ts := newTestHTTPServer(t, signer, "not-a-public-key", server.Config{})
+	ts := newTestHTTPServer(t, signer, "not-a-public-key", server.HandlerConfig{})
 
 	resp, body := get(t, ts.URL+"/")
 	if resp.StatusCode != http.StatusInternalServerError {
@@ -176,7 +172,7 @@ func TestLandingPageFailsCleanlyOnMalformedKey(t *testing.T) {
 
 func TestUnknownPathIsNotFound(t *testing.T) {
 	signer, publicKey := newSigner(t)
-	ts := newTestHTTPServer(t, signer, publicKey, server.Config{})
+	ts := newTestHTTPServer(t, signer, publicKey, server.HandlerConfig{})
 
 	resp, _ := get(t, ts.URL+"/does-not-exist")
 	if resp.StatusCode != http.StatusNotFound {

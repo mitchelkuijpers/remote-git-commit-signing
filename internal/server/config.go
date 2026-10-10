@@ -2,48 +2,29 @@ package server
 
 import (
 	"fmt"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/mitchelkuijpers/remote-git-commit-signing/internal/setting"
 	"github.com/mitchelkuijpers/remote-git-commit-signing/internal/signing"
+	"github.com/mitchelkuijpers/remote-git-commit-signing/internal/wire"
 )
 
-// DefaultPort is the TCP port git-signer-server listens on when SIGNER_PORT is
-// unset.
+// DefaultPort is the TCP port git-signer-server listens on when
+// setting.SignerPort is unset.
 const DefaultPort = 8000
 
 // Rate limit defaults for POST /v1/sign, applied per VM identity.
 const (
 	// DefaultRatePerMin is the sustained per-VM refill rate when
-	// SIGNER_RATE_PER_MIN is unset.
+	// setting.SignerRatePerMin is unset.
 	DefaultRatePerMin = 60
 	// DefaultRateBurst is the per-VM token bucket capacity when
-	// SIGNER_RATE_BURST is unset.
+	// setting.SignerRateBurst is unset.
 	DefaultRateBurst = 10
 )
-
-// Environment variable names understood by LoadConfig.
-const (
-	envKeyPath        = "SIGNER_KEY_PATH"
-	envPort           = "SIGNER_PORT"
-	envCommitterName  = "SIGNER_COMMITTER_NAME"
-	envCommitterEmail = "SIGNER_COMMITTER_EMAIL"
-	envAllowlist      = "SIGNER_ALLOWLIST"
-	envRatePerMin     = "SIGNER_RATE_PER_MIN"
-	envRateBurst      = "SIGNER_RATE_BURST"
-	envDistDir        = "SIGNER_DIST_DIR"
-	envPublicURL      = "SIGNER_PUBLIC_URL"
-)
-
-// DefaultPublicURL is the signer base URL rendered into the client bootstrap
-// script when SIGNER_PUBLIC_URL is unset: the canonical exe.dev
-// peer-integration hostname. It is https, not http: the int.exe.xyz edge
-// 301-redirects http to https, and a redirect in front of key fetches or the
-// sign POST breaks clients that do not follow redirects (or follow them by
-// downgrading POST to GET). TLS terminates at the edge; peer identity
-// injection is unaffected.
-const DefaultPublicURL = "https://git-signer.int.exe.xyz"
 
 // Committer is the pinned Git committer identity a commit must name to be
 // signed. Both fields are required with no default.
@@ -57,26 +38,32 @@ func (c Committer) Matches(name, email string) bool {
 	return c.Name == name && c.Email == email
 }
 
-// Config is the server configuration, sourced from the environment.
+// Config is the server process configuration, sourced from the environment.
 type Config struct {
 	// KeyPath is the path to the private signing key. Required: an empty value
 	// is a configuration error, there is no default.
 	KeyPath string
 	// Port is the TCP port to listen on. Defaults to DefaultPort.
 	Port int
-	// MaxPayloadBytes caps the request body accepted by POST /v1/sign.
-	// Defaults to signing.DefaultMaxPayloadBytes.
-	MaxPayloadBytes int64
-	// SignTimeout bounds a single signing request. Defaults to
-	// signing.DefaultTimeout.
-	SignTimeout time.Duration
+	// Handler carries the request-facing configuration consumed by New: see
+	// HandlerConfig for the fields and their defaults. Defaults are applied
+	// by WithDefaults.
+	Handler HandlerConfig
+}
+
+// HandlerConfig is the request-facing configuration of the HTTP handler set.
+// It is the seam between the process (Config, which loads it) and the handler
+// (New, which consumes it): everything the signing endpoints need except the
+// signer, the public key, and the logger.
+type HandlerConfig struct {
 	// Committer is the pinned committer identity. Both fields are required
 	// with no default: POST /v1/sign only signs commit objects naming exactly
 	// this identity.
 	Committer Committer
 	// Allowlist is the set of VM identities permitted to sign, given as exact
 	// names or path.Match glob patterns. There is no allow-all default: when
-	// SIGNER_ALLOWLIST is unset the list is empty and every request is refused.
+	// setting.SignerAllowlist is unset the list is empty and every request is
+	// refused.
 	Allowlist Allowlist
 	// RatePerMin is the sustained per-VM refill rate for signing requests.
 	// Defaults to DefaultRatePerMin.
@@ -89,75 +76,114 @@ type Config struct {
 	// endpoints: GET /v1/client/... answers 404. GET /install.sh is served
 	// regardless.
 	DistDir string
-	// PublicURL is the signer base URL rendered into the client bootstrap
+	// SignerURL is the signer base URL rendered into the client bootstrap
 	// script (GET /install.sh) and shown on the landing page. It must be the
 	// exe.dev peer-integration URL, not a direct VM URL: only the peer
 	// integration delivers the verified caller identity POST /v1/sign needs.
-	// Defaults to DefaultPublicURL.
-	PublicURL string
+	// LoadConfig validates it; withDefaults fills setting.DefaultSignerURL.
+	SignerURL string
+	// MaxPayloadBytes caps the request body accepted by POST /v1/sign.
+	// Defaults to wire.MaxPayloadBytes.
+	MaxPayloadBytes int64
+	// SignTimeout bounds a single signing request. Defaults to
+	// signing.DefaultKeygenTimeout via Config.Handler; New does not apply
+	// defaults itself.
+	SignTimeout time.Duration
+}
+
+// WithDefaults returns the handler configuration with defaults filled: the
+// environment-facing Config is the source, the handler-facing HandlerConfig
+// the result New consumes.
+func (c Config) WithDefaults() HandlerConfig {
+	return c.Handler.withDefaults()
 }
 
 // LoadConfig reads configuration through getenv (normally os.Getenv). It
-// returns an error for a missing key path or an unparsable port.
+// returns an error for a missing key path, an unparsable port, or an invalid
+// setting.SignerURL.
 func LoadConfig(getenv func(string) string) (Config, error) {
 	cfg := Config{
-		KeyPath: getenv(envKeyPath),
+		KeyPath: getenv(setting.SignerKeyPath),
 		Port:    DefaultPort,
-		Committer: Committer{
-			Name:  getenv(envCommitterName),
-			Email: getenv(envCommitterEmail),
+		Handler: HandlerConfig{
+			Committer: Committer{
+				Name:  getenv(setting.SignerCommitterName),
+				Email: getenv(setting.SignerCommitterEmail),
+			},
+			RatePerMin: DefaultRatePerMin,
+			RateBurst:  DefaultRateBurst,
+			DistDir:    getenv(setting.SignerDistDir),
+			SignerURL:  setting.DefaultSignerURL,
 		},
-		RatePerMin: DefaultRatePerMin,
-		RateBurst:  DefaultRateBurst,
-		DistDir:    getenv(envDistDir),
-		PublicURL:  DefaultPublicURL,
 	}
 
 	if cfg.KeyPath == "" {
-		return Config{}, fmt.Errorf("%s is required", envKeyPath)
+		return Config{}, fmt.Errorf("%s is required", setting.SignerKeyPath)
 	}
 
 	// The pinned committer identity is required with no default: the signer
 	// refuses to sign a commit that names anything else, so a deployment
 	// without it could never sign anything.
-	if cfg.Committer.Name == "" {
-		return Config{}, fmt.Errorf("%s is required", envCommitterName)
+	if cfg.Handler.Committer.Name == "" {
+		return Config{}, fmt.Errorf("%s is required", setting.SignerCommitterName)
 	}
-	if cfg.Committer.Email == "" {
-		return Config{}, fmt.Errorf("%s is required", envCommitterEmail)
+	if cfg.Handler.Committer.Email == "" {
+		return Config{}, fmt.Errorf("%s is required", setting.SignerCommitterEmail)
 	}
 
-	if raw := getenv(envPort); raw != "" {
+	if raw := getenv(setting.SignerPort); raw != "" {
 		port, err := strconv.Atoi(raw)
 		if err != nil || port < 1 || port > 65535 {
-			return Config{}, fmt.Errorf("%s: invalid port %q", envPort, raw)
+			return Config{}, fmt.Errorf("%s: invalid port %q", setting.SignerPort, raw)
 		}
 		cfg.Port = port
 	}
 
-	cfg.Allowlist = parseAllowlist(getenv(envAllowlist))
+	cfg.Handler.Allowlist = parseAllowlist(getenv(setting.SignerAllowlist))
 
-	if raw := getenv(envPublicURL); raw != "" {
-		cfg.PublicURL = raw
+	signerURL, err := parseSignerURL(getenv(setting.SignerURL), setting.DefaultSignerURL)
+	if err != nil {
+		return Config{}, err
 	}
+	cfg.Handler.SignerURL = signerURL
 
-	if raw := getenv(envRatePerMin); raw != "" {
-		rate, err := parsePositiveInt(envRatePerMin, raw)
+	if raw := getenv(setting.SignerRatePerMin); raw != "" {
+		rate, err := parsePositiveInt(setting.SignerRatePerMin, raw)
 		if err != nil {
 			return Config{}, err
 		}
-		cfg.RatePerMin = rate
+		cfg.Handler.RatePerMin = rate
 	}
 
-	if raw := getenv(envRateBurst); raw != "" {
-		burst, err := parsePositiveInt(envRateBurst, raw)
+	if raw := getenv(setting.SignerRateBurst); raw != "" {
+		burst, err := parsePositiveInt(setting.SignerRateBurst, raw)
 		if err != nil {
 			return Config{}, err
 		}
-		cfg.RateBurst = burst
+		cfg.Handler.RateBurst = burst
 	}
 
 	return cfg, nil
+}
+
+// parseSignerURL validates the signer base URL read from setting.SignerURL:
+// it must parse as an absolute URL with an http or https scheme and name a
+// host — the bootstrap script interpolates it, and a malformed value would
+// break every client install, not just this server. Empty falls back to
+// fallback. The result carries no trailing slash, so the templates that append
+// endpoint paths never double one.
+func parseSignerURL(raw, fallback string) (string, error) {
+	if raw == "" {
+		return strings.TrimRight(fallback, "/"), nil
+	}
+	u, err := url.Parse(raw)
+	if err != nil {
+		return "", fmt.Errorf("%s: invalid URL %q", setting.SignerURL, raw)
+	}
+	if (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+		return "", fmt.Errorf("%s: must be an absolute http(s) URL with a host, got %q", setting.SignerURL, raw)
+	}
+	return strings.TrimRight(raw, "/"), nil
 }
 
 // parseAllowlist splits a comma-separated allowlist, trimming blank entries.
@@ -182,25 +208,22 @@ func parsePositiveInt(name, raw string) (int, error) {
 }
 
 // withDefaults fills the optional fields and returns the result.
-func (c Config) withDefaults() Config {
-	if c.Port <= 0 {
-		c.Port = DefaultPort
+func (h HandlerConfig) withDefaults() HandlerConfig {
+	if h.SignerURL == "" {
+		h.SignerURL = setting.DefaultSignerURL
 	}
-	if c.PublicURL == "" {
-		c.PublicURL = DefaultPublicURL
+	h.SignerURL = strings.TrimRight(h.SignerURL, "/")
+	if h.MaxPayloadBytes <= 0 {
+		h.MaxPayloadBytes = wire.MaxPayloadBytes
 	}
-	c.PublicURL = strings.TrimRight(c.PublicURL, "/")
-	if c.MaxPayloadBytes <= 0 {
-		c.MaxPayloadBytes = signing.DefaultMaxPayloadBytes
+	if h.SignTimeout <= 0 {
+		h.SignTimeout = signing.DefaultKeygenTimeout
 	}
-	if c.SignTimeout <= 0 {
-		c.SignTimeout = signing.DefaultTimeout
+	if h.RatePerMin <= 0 {
+		h.RatePerMin = DefaultRatePerMin
 	}
-	if c.RatePerMin <= 0 {
-		c.RatePerMin = DefaultRatePerMin
+	if h.RateBurst <= 0 {
+		h.RateBurst = DefaultRateBurst
 	}
-	if c.RateBurst <= 0 {
-		c.RateBurst = DefaultRateBurst
-	}
-	return c
+	return h
 }

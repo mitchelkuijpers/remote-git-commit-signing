@@ -5,9 +5,9 @@
 //
 //	git-remote-sign -Y sign -n git -f <user.signingkey> <bufferfile>
 //
-// The client submits the buffer bytes to GIT_REMOTE_SIGNER_URL, verifies the
+// The client submits the buffer bytes to SIGNER_URL, verifies the
 // returned SSHSIG against the pinned public key in
-// GIT_REMOTE_SIGNER_PUBLIC_KEY, and only then writes <bufferfile>.sig. Any
+// SIGNER_PUBLIC_KEY, and only then writes <bufferfile>.sig. Any
 // failure exits non-zero (and removes a partial .sig) so Git aborts the commit.
 //
 // Git's verification operations (-Y verify, -Y find-principals,
