@@ -31,7 +31,18 @@ sudo env \
 The server listens on port `8000`, which is the default exe.dev web port, so the
 integration target needs no port suffix. `SIGNER_ALLOWLIST` is the *second*
 authorization layer on top of the integration: only VM names matching it are
-allowed to sign, and it is fail-closed.
+allowed to sign, and it is fail-closed. To make integration attachment the only
+gate, set it to `*` (matches every VM) — the tradeoff: any VM ever attached,
+including a forgotten tagged one, can sign under the pinned identity. The
+reference deployment uses `*` and relies on tag hygiene plus the audit log.
+
+The installer also cross-compiles the client for both Linux architectures and
+installs it, with `install-client.sh`, into `SIGNER_DIST_DIR`
+(default `/usr/local/lib/git-signer/dist`). The server serves these at
+`/v1/client/...` so agent VMs can bootstrap with nothing but the signer URL
+(skip with `GIT_SIGNER_SKIP_DIST=1`). Because server and client come from the
+same source tree in the same installer run, the served client cannot silently
+skew from the server.
 
 ## 2. Create the peer integration
 
@@ -103,8 +114,22 @@ Provisioning a new agent VM is a tag and one command:
 # once per VM, if it does not already carry the tag
 ssh exe.dev tag "$(hostname)" agent
 
+curl -fsSL http://git-signer.int.exe.xyz/install.sh | sh
+```
+
+`/install.sh` is rendered by the signer with the pinned configuration baked
+in — signer URL, public key, and committer identity. It detects the CPU
+architecture, downloads the matching client binary and `install-client.sh`
+from the signer's `/v1/client/...` endpoints, and execs the installer. The
+bootstrap URL is also linked on the signer's landing page (`GET /`).
+
+To provision without the bootstrap (for example a signer with
+`GIT_SIGNER_SKIP_DIST=1`), run `deploy/install-client.sh` from a repo checkout
+with the same values exported by hand:
+
+```bash
 GIT_REMOTE_SIGNER_URL=http://git-signer.int.exe.xyz \
-GIT_REMOTE_SIGNER_PUBLIC_KEY=/var/lib/git-signer/signing_key.pub \
+GIT_REMOTE_SIGNER_PUBLIC_KEY=<public key line or file> \
 GIT_SIGNER_COMMITTER_NAME='Your Name' \
 GIT_SIGNER_COMMITTER_EMAIL='you@example.com' \
   deploy/install-client.sh
@@ -116,9 +141,9 @@ download), writes the git config and client environment, and runs a signing
 self-test that never pushes anything. Re-running it is safe. After that, an
 ordinary `git commit` is signed.
 
-In a VM image or provisioning template, bake in the same four variables and run the
-installer at first boot; the pinned public key must be updated there whenever the
-signing key rotates (see [key-lifecycle.md](key-lifecycle.md)).
+In a VM image or provisioning template, run the same bootstrap at first boot;
+the pinned public key always comes from the live signer, so key rotation (see
+[key-lifecycle.md](key-lifecycle.md)) never strands a baked-in key.
 
 ## Zero cleanup on teardown
 

@@ -27,6 +27,11 @@ type Server struct {
 	signTimeout time.Duration
 	// committer is the pinned identity a commit must name to be signed.
 	committer Committer
+	// distDir is the client-distribution directory (empty disables
+	// /v1/client/... and /install.sh); publicURL renders into the bootstrap
+	// script and landing page.
+	distDir   string
+	publicURL string
 	logger    *slog.Logger
 	mux       http.Handler
 	allowlist Allowlist
@@ -50,6 +55,8 @@ func New(signer signing.Signer, publicKey string, cfg Config, logger *slog.Logge
 		maxPayload:  cfg.MaxPayloadBytes,
 		signTimeout: cfg.SignTimeout,
 		committer:   cfg.Committer,
+		distDir:     cfg.DistDir,
+		publicURL:   cfg.PublicURL,
 		logger:      logger,
 		allowlist:   cfg.Allowlist,
 		limiter:     newRateLimiter(cfg.RatePerMin, cfg.RateBurst),
@@ -59,6 +66,8 @@ func New(signer signing.Signer, publicKey string, cfg Config, logger *slog.Logge
 	mux.HandleFunc("GET /{$}", s.handleLandingPage)
 	mux.HandleFunc("POST /v1/sign", s.withAuthorization(s.handleSign))
 	mux.HandleFunc("GET /v1/public-key", s.handlePublicKey)
+	mux.HandleFunc("GET /install.sh", s.handleInstallScript)
+	mux.HandleFunc("GET /v1/client/{name}", s.handleClientFile)
 	mux.HandleFunc("GET /healthz", s.handleHealthz)
 	mux.HandleFunc("GET /readyz", s.handleReadyz)
 	s.mux = withRequestID(mux)

@@ -27,6 +27,11 @@
 #   GIT_SIGNER_PORT            listen port written to the env file (default 8000)
 #   GIT_SIGNER_RATE_PER_MIN    sustained per-VM signing rate (default: server's)
 #   GIT_SIGNER_RATE_BURST      per-VM burst capacity (default: server's)
+#   GIT_SIGNER_DIST_DIR        directory the server serves client downloads
+#                              from (default: /usr/local/lib/git-signer/dist);
+#                              client binaries are built from GIT_SIGNER_REPO_DIR
+#   GIT_SIGNER_SKIP_DIST       set to 1 to skip building/installing the client
+#                              dist (disables /install.sh and /v1/client/...)
 #   GIT_SIGNER_SERVER_BIN      prebuilt server binary to install
 #   GIT_SIGNER_REPO_DIR        source tree used to build the binary
 #   DESTDIR                    staging root; staged installs skip user
@@ -49,8 +54,17 @@ DESTDIR=${DESTDIR:-}
 
 BIN_NAME=git-signer-server
 UNIT_NAME=git-signer.service
+CLIENT_BIN_NAME=git-remote-sign
+DIST_DIR=${GIT_SIGNER_DIST_DIR:-/usr/local/lib/git-signer/dist}
+skip_dist=${GIT_SIGNER_SKIP_DIST:-0}
 
 cfg_key_path=$KEY_DIR/$KEY_NAME
+cfg_dist_dir=$DIST_DIR
+
+# Shared build scratch for everything this run compiles; removed on exit.
+work_dir=$(mktemp -d)
+# shellcheck disable=SC2064 # expand work_dir when the trap runs
+trap 'rm -rf "$work_dir"' EXIT INT TERM
 
 staging=0
 if [ -n "$DESTDIR" ]; then
@@ -99,11 +113,13 @@ done
 # Filesystem view: in staging mode everything lands under DESTDIR.
 fs_key_dir=$KEY_DIR
 fs_conf_dir=$CONF_DIR
+fs_dist_dir=$DIST_DIR
 bin_dir=/usr/local/bin
 unit_dir=/etc/systemd/system
 if [ "$staging" -eq 1 ]; then
 	fs_key_dir=$DESTDIR$KEY_DIR
 	fs_conf_dir=$DESTDIR$CONF_DIR
+	fs_dist_dir=$DESTDIR$DIST_DIR
 	bin_dir=$DESTDIR/usr/local/bin
 	unit_dir=$DESTDIR/etc/systemd/system
 fi
@@ -168,12 +184,9 @@ resolve_binary() {
 		fi
 	done
 	if command -v go >/dev/null 2>&1; then
-		build_dir=$(mktemp -d)
-		# shellcheck disable=SC2064 # expand build_dir when the trap runs
-		trap 'rm -rf "$build_dir"' EXIT INT TERM
 		echo "building $BIN_NAME from $REPO_DIR" >&2
-		if (cd "$REPO_DIR" && go build -o "$build_dir/$BIN_NAME" "./cmd/$BIN_NAME"); then
-			bin_src=$build_dir/$BIN_NAME
+		if (cd "$REPO_DIR" && go build -o "$work_dir/$BIN_NAME" "./cmd/$BIN_NAME"); then
+			bin_src=$work_dir/$BIN_NAME
 			return 0
 		fi
 		echo "error: go build failed" >&2
@@ -185,6 +198,35 @@ resolve_binary() {
 }
 
 resolve_binary
+
+# build_client_dist cross-compiles the client for both Linux architectures
+# into work_dir/dist and adds install-client.sh, so the server can serve the
+# whole client bootstrap itself. Skew between the installed server and the
+# served client is practically impossible because both come from the same
+# source tree in the same installer run.
+build_client_dist() {
+	if [ "$skip_dist" = "1" ]; then
+		echo "note: GIT_SIGNER_SKIP_DIST=1; client dist not installed" >&2
+		echo "      (/install.sh and /v1/client/... will not work)" >&2
+		return 0
+	fi
+	if ! command -v go >/dev/null 2>&1; then
+		echo "error: go not found; cannot build the client dist." >&2
+		echo "       Install Go or set GIT_SIGNER_SKIP_DIST=1 to skip." >&2
+		return 1
+	fi
+	mkdir -p "$work_dir/dist"
+	for arch in amd64 arm64; do
+		echo "building $CLIENT_BIN_NAME-linux-$arch from $REPO_DIR" >&2
+		if ! (cd "$REPO_DIR" && GOOS=linux GOARCH=$arch go build -o "$work_dir/dist/$CLIENT_BIN_NAME-linux-$arch" "./cmd/$CLIENT_BIN_NAME"); then
+			echo "error: go build failed (linux/$arch client)" >&2
+			return 1
+		fi
+	done
+	cp "$SCRIPT_DIR/install-client.sh" "$work_dir/dist/install-client.sh"
+}
+
+build_client_dist
 
 # 1. Dedicated unprivileged account.
 if [ "$staging" -eq 0 ]; then
@@ -236,7 +278,17 @@ tmp_env=$fs_env_file.tmp
 	emit SIGNER_COMMITTER_NAME "${GIT_SIGNER_COMMITTER_NAME:-}"
 	emit SIGNER_COMMITTER_EMAIL "${GIT_SIGNER_COMMITTER_EMAIL:-}"
 	emit SIGNER_ALLOWLIST "${GIT_SIGNER_ALLOWLIST:-}"
+	if [ "$skip_dist" = "1" ]; then
+		echo "#SIGNER_DIST_DIR=   # unset: client dist serving disabled"
+	else
+		echo "SIGNER_DIST_DIR=$cfg_dist_dir"
+	fi
 	echo "# Optional; uncomment to override the server defaults."
+	if [ -n "${GIT_SIGNER_PUBLIC_URL:-}" ]; then
+		echo "SIGNER_PUBLIC_URL=$GIT_SIGNER_PUBLIC_URL"
+	else
+		echo "#SIGNER_PUBLIC_URL=http://git-signer.int.exe.xyz"
+	fi
 	if [ -n "${GIT_SIGNER_PORT:-}" ]; then
 		echo "SIGNER_PORT=$GIT_SIGNER_PORT"
 	else
@@ -269,6 +321,13 @@ fi
 install -d -m 0755 "$bin_dir" "$unit_dir"
 install -m 0755 "$bin_src" "$bin_dir/$BIN_NAME"
 install -m 0644 "$unit_src" "$unit_dir/$UNIT_NAME"
+
+# 4b. Client dist served by the server (world-readable; no key material — the
+# client binaries and the installer script only).
+if [ "$skip_dist" != "1" ]; then
+	install -d -m 0755 "$fs_dist_dir"
+	install -m 0755 "$work_dir/dist/$CLIENT_BIN_NAME-linux-amd64" "$work_dir/dist/$CLIENT_BIN_NAME-linux-arm64" "$work_dir/dist/install-client.sh" "$fs_dist_dir/"
+fi
 
 # 5. Signing key (only if absent).
 if [ "$skip_key" -eq 1 ]; then
@@ -313,5 +372,10 @@ echo "" >&2
 echo "public signing key (register with GitLab as a Signing key only):" >&2
 cat "$fs_key_path.pub"
 echo "" >&2
+if [ "$skip_dist" != "1" ]; then
+	echo "client bootstrap (on any attached agent VM):" >&2
+	echo "  curl -fsSL ${GIT_SIGNER_PUBLIC_URL:-http://git-signer.int.exe.xyz}/install.sh | sh" >&2
+	echo "" >&2
+fi
 echo "logs:      journalctl -u $UNIT_NAME -f" >&2
 echo "lifecycle: docs/key-lifecycle.md (backup, rotation, recovery)" >&2

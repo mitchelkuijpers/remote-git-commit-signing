@@ -121,6 +121,16 @@ Attach the exe.dev peer integration to the VM (or, better, to a tag so every fut
 VM inherits it — see [docs/exe-dev-setup.md](docs/exe-dev-setup.md)), then run one command:
 
 ```bash
+curl -fsSL http://git-signer.int.exe.xyz/install.sh | sh
+```
+
+The signer renders `/install.sh` with the pinned configuration baked in (URL, public key,
+committer identity); the script downloads the client binary and
+[`deploy/install-client.sh`](deploy/install-client.sh) from the signer's `/v1/client/...`
+endpoints and runs it. To provision by hand instead (e.g. a client platform the signer
+doesn't serve), export the same values and run the installer from a repo checkout:
+
+```bash
 GIT_REMOTE_SIGNER_URL=http://git-signer.int.exe.xyz \
 GIT_REMOTE_SIGNER_PUBLIC_KEY=/var/lib/git-signer/signing_key.pub \
 GIT_SIGNER_COMMITTER_NAME='Your Name' \

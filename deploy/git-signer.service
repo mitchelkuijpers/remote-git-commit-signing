@@ -29,6 +29,12 @@ Group=git-signer
 #   SIGNER_PORT               optional   listen port (default 8000)
 #   SIGNER_RATE_PER_MIN       optional   sustained per-VM signing rate
 #   SIGNER_RATE_BURST         optional   per-VM burst capacity
+#   SIGNER_DIST_DIR           optional   directory the server serves client
+#                                        downloads from (unset disables
+#                                        /install.sh and /v1/client/...)
+#   SIGNER_PUBLIC_URL         optional   signer base URL rendered into the
+#                                        client bootstrap script (default
+#                                        http://git-signer.int.exe.xyz)
 EnvironmentFile=-/etc/git-signer/git-signer.env
 Environment=SIGNER_KEY_PATH=/var/lib/git-signer/signing_key
 
