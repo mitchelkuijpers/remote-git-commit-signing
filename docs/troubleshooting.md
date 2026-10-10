@@ -81,9 +81,9 @@ fatal: failed to write commit object
 
 Causes and fixes, in order:
 
-1. `GIT_REMOTE_SIGNER_URL` is wrong or points at a localhost/non-peer address. It must
+1. `SIGNER_URL` is wrong or points at a localhost/non-peer address. It must
    be the exe.dev peer URL (`https://git-signer.int.exe.xyz`) or a proxy that stamps the
-   platform identity. Check with `curl -s "$GIT_REMOTE_SIGNER_URL/healthz"`.
+   platform identity. Check with `curl -s "$SIGNER_URL/healthz"`.
 2. The peer integration is not attached to this VM (missing `agent` tag, or the VM was
    attached to neither tag nor name). See [exe-dev-setup.md](exe-dev-setup.md).
 3. The signer service is down or restarting:
@@ -143,7 +143,7 @@ The payload's `committer` line does not match `SIGNER_COMMITTER_NAME` /
 - Check the VM's effective identity: `git config --global user.name; git config --global user.email`
   (and any repo-local override).
 - Re-run `deploy/install-client.sh` with the correct
-  `GIT_SIGNER_COMMITTER_NAME`/`GIT_SIGNER_COMMITTER_EMAIL`, or fix the git config
+  `SIGNER_COMMITTER_NAME`/`SIGNER_COMMITTER_EMAIL`, or fix the git config
   directly.
 
 ### Already carries a signature (422)
@@ -192,11 +192,11 @@ These fail before any HTTP request; the same `error: git-remote-sign: …` +
 
 | Message | Cause | Fix |
 | --- | --- | --- |
-| `git-remote-sign: GIT_REMOTE_SIGNER_URL is required` | Variable unset (or empty) | Re-run the installer, or `export` it / source `~/.config/git-remote-signer/env` |
-| `git-remote-sign: GIT_REMOTE_SIGNER_URL: unsupported scheme "…"` / `missing host` | Bad URL | Use `http://` or `https://` with a host |
-| `git-remote-sign: GIT_REMOTE_SIGNER_PUBLIC_KEY is required` | Pinned key unset | Re-run the installer, or set it to the key line or its file path |
-| `git-remote-sign: GIT_REMOTE_SIGNER_PUBLIC_KEY: not a valid SSH public key line and not a readable file: …` | Neither a key line nor an existing file | Point it at `~/.config/git-remote-signer/signing.pub` |
-| `git-remote-sign: GIT_REMOTE_SIGN_TIMEOUT: …` | Unparsable/non-positive duration | Use a Go duration such as `10s` |
+| `git-remote-sign: SIGNER_URL is required` | Variable unset (or empty) | Re-run the installer, or `export` it / source `~/.config/git-remote-signer/env` |
+| `git-remote-sign: SIGNER_URL: unsupported scheme "…"` / `missing host` | Bad URL | Use `http://` or `https://` with a host |
+| `git-remote-sign: SIGNER_PUBLIC_KEY is required` | Pinned key unset | Re-run the installer, or set it to the key line or its file path |
+| `git-remote-sign: SIGNER_PUBLIC_KEY: not a valid SSH public key line and not a readable file: …` | Neither a key line nor an existing file | Point it at `~/.config/git-remote-signer/signing.pub` |
+| `git-remote-sign: SIGNER_TIMEOUT: …` | Unparsable/non-positive duration | Use a Go duration such as `10s` |
 | `git-remote-sign: ssh-keygen not found in PATH: …` | OpenSSH client missing | Install `openssh-client` |
 | `git-remote-sign: operation "…" is not implemented yet` | Git called an operation the client does not intercept | Only `sign` is intercepted; check the Git version's argv |
 | `git-remote-sign: unsupported signing-program invocation: argv[1] is "…", want -Y` | Wrong invocation | The program must be configured as `gpg.ssh.program`, not called by hand |
@@ -209,10 +209,10 @@ Two distinct checks can fail; both are fail-closed.
 **1. The key Git asks to sign with is not the pinned key:**
 
 ```text
-error: git-remote-sign: signing key /path/to/other.pub does not match the pinned GIT_REMOTE_SIGNER_PUBLIC_KEY key
+error: git-remote-sign: signing key /path/to/other.pub does not match the pinned SIGNER_PUBLIC_KEY key
 ```
 
-`user.signingkey` (passed as `-f`) and `GIT_REMOTE_SIGNER_PUBLIC_KEY` disagree.
+`user.signingkey` (passed as `-f`) and `SIGNER_PUBLIC_KEY` disagree.
 Re-run the installer, or set `user.signingkey` to the pinned key file.
 
 **2. The installer's cross-check against the server fails:**
@@ -223,7 +223,7 @@ install-client: error: refusing to configure a client with a key the signer does
 ```
 
 The signer currently holds a different key than the one being pinned. Either the pin
-is stale (a rotation happened — update `GIT_REMOTE_SIGNER_PUBLIC_KEY` and re-run) or
+is stale (a rotation happened — update `SIGNER_PUBLIC_KEY` and re-run) or
 the URL points at the wrong signer. Never "fix" this by removing the check.
 
 If the `server:` line prints HTML (`<a href="https://…">Moved</a>`) instead of a
@@ -286,12 +286,12 @@ configured, but signing does not work yet.
 
 | Message | Cause | Fix |
 | --- | --- | --- |
-| `install-client: self-test commit failed. The signer is reachable, so check that GIT_REMOTE_SIGNER_URL is the platform URL that injects the verified VM identity for POST /v1/sign, that this VM is in SIGNER_ALLOWLIST, and that the committer identity matches SIGNER_COMMITTER_NAME/EMAIL.` | The signer is reachable but refused the signing request (401/403/409/429) | Fix the specific rejection (see above); run `--skip-selftest` only when you knowingly configure before the integration is attached |
+| `install-client: self-test commit failed. The signer is reachable, so check that SIGNER_URL is the platform URL that injects the verified VM identity for POST /v1/sign, that this VM is in SIGNER_ALLOWLIST, and that the committer identity matches SIGNER_COMMITTER_NAME/EMAIL.` | The signer is reachable but refused the signing request (401/403/409/429) | Fix the specific rejection (see above); run `--skip-selftest` only when you knowingly configure before the integration is attached |
 | `install-client: self-test signature did not verify against the pinned key.` | The commit was signed but does not verify locally with the pinned key | The pinned key does not match what the signer used — check for a rotation in progress |
 | `install-client: signer is not reachable at <url> (GET /healthz failed). …` | Same causes as [signer unreachable](#signer-unreachable-git-commit-exit-128) | Fix reachability, then re-run |
 | `install-client: error: checksum verification failed for <artifact>` | Release artifact/tag mismatch or a tampered download | Re-check the release tag and assets; use `GIT_REMOTE_SIGNER_BIN` meanwhile |
 | `install-client: error: checksums.txt has no entry for <artifact>` | Release missing the artifact for this OS/arch | Check the release; or install a local binary |
-| `install-client: error: GIT_REMOTE_SIGNER_PUBLIC_KEY …` | Bad pin, per [client configuration errors](#client-configuration-errors) | Fix the value |
+| `install-client: error: SIGNER_PUBLIC_KEY …` | Bad pin, per [client configuration errors](#client-configuration-errors) | Fix the value |
 
 `--skip-selftest` configures the VM without the round-trip; use it only when the
 integration is attached later.
@@ -336,8 +336,8 @@ journalctl -u git-signer.service -n 50 --no-pager
 sudo systemctl restart git-signer.service
 
 # Agent VM
-curl -s "$GIT_REMOTE_SIGNER_URL/healthz"; echo; curl -s "$GIT_REMOTE_SIGNER_URL/readyz"; echo
-curl -s "$GIT_REMOTE_SIGNER_URL/v1/public-key"
+curl -s "$SIGNER_URL/healthz"; echo; curl -s "$SIGNER_URL/readyz"; echo
+curl -s "$SIGNER_URL/v1/public-key"
 ssh-keygen -lf ~/.config/git-remote-signer/signing.pub
 git config --global --get-regexp '^(user|gpg|commit)\.'
 git verify-commit HEAD
