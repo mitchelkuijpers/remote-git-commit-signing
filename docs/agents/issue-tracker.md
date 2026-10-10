@@ -15,6 +15,15 @@ export GH_HOST=github.int.exe.xyz
 export GH_TOKEN=proxy-injected   # any non-empty string; the proxy injects real auth
 ```
 
+Or persist it once instead of exporting every time:
+
+```bash
+echo proxy-injected | gh auth login -h github.int.exe.xyz --git-protocol https --with-token
+```
+
+After that, `gh` picks the host from the repo's `origin` remote and no
+environment variables are needed.
+
 The proxy only proxies `/repos/OWNER/REPO/...` API paths for granted repos; git operations
 (clone/push/pull) work directly. On machines with a regular GitHub login, standard
 `gh auth login` works instead — everything below is unchanged.
