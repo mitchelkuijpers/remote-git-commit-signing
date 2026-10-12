@@ -152,7 +152,7 @@ if [ "$staging" -eq 0 ]; then
 		echo "       Re-run, for example:" >&2
 		echo "         sudo env SIGNER_COMMITTER_NAME='Your Name' \\" >&2
 		echo "           SIGNER_COMMITTER_EMAIL='you@example.com' \\" >&2
-		echo "           SIGNER_ALLOWLIST='agent-*' deploy/install-server.sh" >&2
+		echo "           SIGNER_ALLOWLIST='*' deploy/install-server.sh" >&2
 		echo "       (SIGNER_ALLOWLIST is fail-closed: an empty value admits nobody.)" >&2
 		exit 1
 	fi

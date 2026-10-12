@@ -34,7 +34,7 @@ On a fresh signer VM, provide the required configuration and run the installer:
 sudo env \
   SIGNER_COMMITTER_NAME='Your Name' \
   SIGNER_COMMITTER_EMAIL='you@example.com' \
-  SIGNER_ALLOWLIST='agent-*,builder-1' \
+  SIGNER_ALLOWLIST='*' \
   deploy/install-server.sh
 ```
 
@@ -67,8 +67,17 @@ loads via `EnvironmentFile=`. It holds settings only — never key material:
 
 `SIGNER_ALLOWLIST` entries are matched against the exe.dev-verified source VM
 identity (`X-Exedev-Source-Vm`); each entry is either an exact VM name or a
-`path.Match` glob (for example `agent-*`). It is **fail-closed**: an empty or
-missing allowlist admits nobody, so never leave it unset.
+`path.Match` glob.
+
+Note the two namespaces: the peer integration attaches by **tag**, but this
+Allowlist matches the **source-VM identity** — a VM *name*. An entry such as
+`agent-*` therefore matches only names beginning with `agent-`, so a VM carrying
+the `agent` tag can pass the integration and still be refused. The examples use
+`*`, making authenticated attachment the only gate; the tradeoff is that any
+attached VM (for example a forgotten tagged one) can then sign. Use the exact name
+(e.g. `builder-1`) or a glob (e.g. `builders-*`) instead when you want per-VM
+scoping. It is **fail-closed**: an empty or missing allowlist admits nobody, so
+never leave it unset.
 
 After editing the env file, `sudo systemctl restart git-signer.service`.
 

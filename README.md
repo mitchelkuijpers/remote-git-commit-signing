@@ -93,9 +93,13 @@ On a persistent VM, [`deploy/install-server.sh`](deploy/install-server.sh) insta
 sudo env \
   SIGNER_COMMITTER_NAME='Your Name' \
   SIGNER_COMMITTER_EMAIL='you@example.com' \
-  SIGNER_ALLOWLIST='agent-*' \
+  SIGNER_ALLOWLIST='*' \
   deploy/install-server.sh
 ```
+
+`*` makes authenticated integration attachment the only gate; see
+[Running the signer](#running-the-signer) for the tag-versus-identity caveat and the
+tradeoff.
 
 It creates `/var/lib/git-signer` (mode `0700`), generates an ED25519 key if none exists,
 installs `/etc/git-signer/git-signer.env` and `git-signer.service`, starts the service, and
@@ -117,12 +121,35 @@ Full walkthrough, including the verified-email requirement for the Verified badg
 
 ### 3. Provision an agent VM
 
-Attach the exe.dev peer integration to the VM (or, better, to a tag so every future agent
-VM inherits it — see [docs/exe-dev-setup.md](docs/exe-dev-setup.md)), then run one command:
+Agent VMs reach the signer only through the exe.dev peer integration, so create it once and
+attach it to a tag before bootstrapping. From a machine with the `exe.dev` CLI:
 
 ```bash
+# once: expose the signer through an authenticated peer proxy and attach it to every VM
+# carrying the `agent` tag (see docs/exe-dev-setup.md for vm:/auto:all attachments)
+ssh exe.dev integrations add http-proxy \
+  --name git-signer \
+  --target https://SIGNER_VM.exe.xyz/ \
+  --peer \
+  --attach tag:agent
+
+# once per agent VM that does not already carry the tag
+ssh exe.dev tag "$(hostname)" agent
+```
+
+Then preflight reachability through the proxy and bootstrap:
+
+```bash
+curl -fsS https://git-signer.int.exe.xyz/healthz        # preflight: -> ok
 curl -fsSL https://git-signer.int.exe.xyz/install.sh | sh
 ```
+
+`/install.sh` is served through the authenticated peer proxy, not a public host: a VM with
+no integration attached is refused with an edge `403` before any signer code runs. Because
+the documented command pipes `curl` into `sh`, that failed fetch is masked — `sh` receives
+nothing and the bootstrap silently does nothing. A silent no-op therefore points at the
+missing integration, not at the client; the `healthz` preflight above fails loudly instead.
+See [docs/exe-dev-setup.md](docs/exe-dev-setup.md) for the full integration walkthrough.
 
 The signer renders `/install.sh` with the pinned configuration baked in (URL, public key,
 committer identity); the script downloads the client binary and
@@ -241,7 +268,7 @@ practice: it is fail-closed, so an unset or empty value refuses every request.
 ssh-keygen -t ed25519 -N '' -C git-signer -f /tmp/signing_key
 SIGNER_KEY_PATH=/tmp/signing_key \
   SIGNER_COMMITTER_NAME='Dev Eloper' SIGNER_COMMITTER_EMAIL='dev@example.com' \
-  SIGNER_ALLOWLIST='agent-*' go run ./cmd/git-signer-server
+  SIGNER_ALLOWLIST='*' go run ./cmd/git-signer-server
 ```
 
 ```bash
@@ -263,9 +290,18 @@ curl -s -H 'X-Exedev-Source-Vm: agent-1' --data-binary @commit-payload \
 `POST /v1/sign` requires the platform-verified source-VM identity
 (`X-Exedev-Source-Vm`, set by the exe.dev peer proxy in production) and authorizes it
 against `SIGNER_ALLOWLIST`, a comma-separated list of exact VM names and `path.Match` glob
-patterns (for example `agent-*,ci-runner`). There is no allow-all default: an unset or
-empty allowlist refuses every request (`401` when the identity is missing, `403` when it is
-not allowlisted). Per-VM rate limiting returns `429` once a VM exhausts its token bucket;
+patterns.
+
+The exe.dev peer integration attaches by **tag**, but this Allowlist matches the
+**source-VM identity** — a VM *name*. The two are different namespaces, so an entry such as
+`agent-*` matches only names beginning with `agent-`: a VM carrying the `agent` tag passes
+the integration and is still refused. The recommended default is `*`, which makes
+authenticated attachment the only gate; the tradeoff is that any attached VM — for example
+a forgotten tagged one — can sign under the pinned committer identity. Narrow it to an
+exact VM name (for example `builder-1`) or a glob (`builders-*`) to scope per VM. There is
+no allow-all default: an unset or empty allowlist refuses every request (`401` when the
+identity is missing, `403` when it is not allowlisted). Per-VM rate limiting returns `429`
+once a VM exhausts its token bucket;
 the sustained rate is `SIGNER_RATE_PER_MIN` (default `60`) with a burst capacity of
 `SIGNER_RATE_BURST` (default `10`). Every signing decision emits one structured `slog`
 JSON audit line carrying the VM, payload SHA-256, status and duration — never the payload.
