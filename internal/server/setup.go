@@ -157,12 +157,15 @@ var clientFiles = map[string]string{
 }
 
 // clientArchCases derives the bootstrap's architecture dispatch from the
-// clientFiles whitelist: only an architecture the signer actually serves gets
-// an arm, so the whitelist stays the single owner of the artifact set and
-// adding an architecture stays a one-place change. An architecture the caller
-// reports that has no served binary falls through to the fail-closed default
-// arm; a whitelisted binary whose architecture has no known machine spelling
-// is not selectable and gets no arm.
+// clientFiles whitelist: the whitelist owns the served set, so only an
+// architecture the signer actually serves gets an arm and an architecture the
+// caller reports that has no served binary falls through to the fail-closed
+// default arm. The uname -m spellings live in clientMachines, which owns the
+// platform knowledge the whitelist cannot carry; adding an architecture is
+// therefore a two-table edit, and TestClientFileArchitecturesAreDispatchable
+// keeps the tables locked together — a whitelisted binary whose architecture
+// has no clientMachines spelling would otherwise be served yet never
+// selectable, with no arm to dispatch to.
 func clientArchCases() []clientArchCase {
 	var cases []clientArchCase
 	for name := range clientFiles {
