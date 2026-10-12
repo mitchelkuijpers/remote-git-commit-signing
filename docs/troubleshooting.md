@@ -28,7 +28,7 @@ journalctl -u git-signer.service -f | grep sign_request
 | Field | Meaning |
 | --- | --- |
 | `outcome` | `signed`, `rejected` (4xx), or `failed` (5xx) |
-| `vm` | The platform-verified source VM identity (empty when the identity header was missing) |
+| `vm` | The platform-verified source VM identity (empty when the trust header was missing) |
 | `request_id` | Per-request identifier, also returned in the `X-Request-Id` response header — correlate a client report with this log line |
 | `payload_sha256` | SHA-256 of the exact payload bytes — correlate with a commit to see who signed it |
 | `payload_bytes` | Payload size |
@@ -99,7 +99,7 @@ The client does not retry and has no unsigned fallback: it fails the commit.
 error: git-remote-sign: signer returned 401 Unauthorized: missing VM identity
 ```
 
-The request reached the signer without the platform identity header. Either the URL is not
+The request reached the signer without the trust header. Either the URL is not
 the peer-integration URL (a direct request is refused by design), or a proxy between the VM
 and the signer stripped the header.
 
