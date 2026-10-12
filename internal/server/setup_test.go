@@ -8,7 +8,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
-	"runtime"
 	"strings"
 	"testing"
 
@@ -39,6 +38,42 @@ func distDirWith(t *testing.T, files map[string]string) string {
 		}
 	}
 	return dir
+}
+
+// runRenderedScript executes a rendered bootstrap script with `sh -` in a fresh
+// temp working directory and returns that directory (also the script's cwd, for
+// relative marker files) plus the combined output and error. `uname` is stubbed
+// first on PATH to report machine, so the test fixes the architecture the script
+// sees on every host instead of skipping on the rest. It skips when sh or curl
+// is unavailable.
+func runRenderedScript(t *testing.T, script, machine string) (string, []byte, error) {
+	t.Helper()
+	sh, err := exec.LookPath("sh")
+	if err != nil {
+		t.Skip("sh not available:", err)
+	}
+	if _, err := exec.LookPath("curl"); err != nil {
+		t.Skip("curl not available:", err)
+	}
+	work := t.TempDir()
+	binDir := filepath.Join(work, "bin")
+	if err := os.Mkdir(binDir, 0o755); err != nil {
+		t.Fatalf("create stub bin dir: %v", err)
+	}
+	stub := "#!/bin/sh\nprintf '%s\\n' '" + machine + "'\n"
+	if err := os.WriteFile(filepath.Join(binDir, "uname"), []byte(stub), 0o755); err != nil {
+		t.Fatalf("write uname stub: %v", err)
+	}
+	cmd := exec.Command(sh, "-")
+	cmd.Stdin = strings.NewReader(script)
+	cmd.Dir = work
+	cmd.Env = append(os.Environ(),
+		"HOME="+work,
+		"TMPDIR="+work,
+		"PATH="+binDir+string(os.PathListSeparator)+os.Getenv("PATH"),
+	)
+	out, err := cmd.CombinedOutput()
+	return work, out, err
 }
 
 func TestInstallScriptRendersPinnedConfig(t *testing.T) {
@@ -88,39 +123,25 @@ var fakeClientBinaries = map[string]string{
 	"git-remote-sign-linux-arm64": "fake-arm64-binary\n",
 }
 
-// TestInstallScriptInstallsBinaryForHostArch executes the rendered bootstrap
+// TestInstallScriptInstallsBinaryForStubbedArch executes the rendered bootstrap
 // end to end against a stub installer and asserts its externally observable
-// effects: exactly the binary for this host's architecture is downloaded, it
-// arrives executable, and the installer runs to completion. The stub stands in
-// for deploy/install-client.sh at the boundary; it fails loudly if the
-// bootstrap hands it a non-executable binary or the other architecture's.
-func TestInstallScriptInstallsBinaryForHostArch(t *testing.T) {
-	sh, err := exec.LookPath("sh")
-	if err != nil {
-		t.Skip("sh not available:", err)
-	}
-	if _, err := exec.LookPath("curl"); err != nil {
-		t.Skip("curl not available:", err)
-	}
-	switch runtime.GOARCH {
-	case "amd64", "arm64":
-	default:
-		t.Skipf("host architecture %s is not one the bootstrap serves", runtime.GOARCH)
-	}
-	hostBinary := "git-remote-sign-linux-" + runtime.GOARCH
-
-	work := t.TempDir()
-	marker := filepath.Join(work, "installer-ran")
-	expected := filepath.Join(work, "expected-binary")
-	if err := os.WriteFile(expected, []byte(fakeClientBinaries[hostBinary]), 0o644); err != nil {
-		t.Fatalf("write expected binary: %v", err)
-	}
+// effects: with uname -m stubbed to x86_64, exactly the amd64 binary is
+// downloaded, it arrives executable, and the installer runs to completion.
+// Stubbing uname keeps this regression guard running on every host instead of
+// skipping on the ones the signer does not build for; the stub stands in for
+// deploy/install-client.sh at the boundary and fails loudly if the bootstrap
+// hands it a non-executable binary or the other architecture's.
+func TestInstallScriptInstallsBinaryForStubbedArch(t *testing.T) {
+	const (
+		machine = "x86_64"
+		served  = "git-remote-sign-linux-amd64"
+	)
 	installer := strings.Join([]string{
 		"#!/bin/sh",
 		"set -eu",
 		`if [ ! -x "$GIT_REMOTE_SIGNER_BIN" ]; then echo "stub: not executable: $GIT_REMOTE_SIGNER_BIN" >&2; exit 1; fi`,
-		`if ! cmp -s "` + expected + `" "$GIT_REMOTE_SIGNER_BIN"; then echo "stub: wrong binary for $(uname -m)" >&2; exit 1; fi`,
-		`printf 'installed\n' > "` + marker + `"`,
+		`if [ "$(cat "$GIT_REMOTE_SIGNER_BIN")" != '` + strings.TrimSuffix(fakeClientBinaries[served], "\n") + `' ]; then echo "stub: wrong binary for $(uname -m)" >&2; exit 1; fi`,
+		`printf 'installed\n' > installer-ran`,
 		"",
 	}, "\n")
 
@@ -149,15 +170,11 @@ func TestInstallScriptInstallsBinaryForHostArch(t *testing.T) {
 
 	_, script := get(t, ts.URL+"/install.sh")
 
-	cmd := exec.Command(sh, "-")
-	cmd.Stdin = strings.NewReader(script)
-	cmd.Dir = work
-	cmd.Env = append(os.Environ(), "HOME="+work, "TMPDIR="+work)
-	out, err := cmd.CombinedOutput()
+	work, out, err := runRenderedScript(t, script, machine)
 	if err != nil {
-		t.Fatalf("rendered install.sh failed on %s: %v\noutput:\n%s\nscript:\n%s", runtime.GOARCH, err, out, script)
+		t.Fatalf("rendered install.sh failed on stubbed %s: %v\noutput:\n%s\nscript:\n%s", machine, err, out, script)
 	}
-	if _, err := os.Stat(marker); err != nil {
+	if _, err := os.Stat(filepath.Join(work, "installer-ran")); err != nil {
 		t.Fatalf("stub installer did not run to completion: %v\noutput:\n%s\nscript:\n%s", err, out, script)
 	}
 }
@@ -166,22 +183,6 @@ func TestInstallScriptInstallsBinaryForHostArch(t *testing.T) {
 // architecture with no served binary aborts loudly instead of silently
 // installing nothing or a wrong variant.
 func TestInstallScriptFailsClosedOnUnservedArchitecture(t *testing.T) {
-	sh, err := exec.LookPath("sh")
-	if err != nil {
-		t.Skip("sh not available:", err)
-	}
-
-	work := t.TempDir()
-	binDir := filepath.Join(work, "bin")
-	if err := os.Mkdir(binDir, 0o755); err != nil {
-		t.Fatalf("create stub bin dir: %v", err)
-	}
-	// A stub uname reports an architecture the signer does not serve, whatever
-	// the test host is.
-	if err := os.WriteFile(filepath.Join(binDir, "uname"), []byte("#!/bin/sh\necho riscv64\n"), 0o755); err != nil {
-		t.Fatalf("write uname stub: %v", err)
-	}
-
 	dist := distDirWith(t, map[string]string{
 		"git-remote-sign-linux-amd64": fakeClientBinaries["git-remote-sign-linux-amd64"],
 		"git-remote-sign-linux-arm64": fakeClientBinaries["git-remote-sign-linux-arm64"],
@@ -192,11 +193,9 @@ func TestInstallScriptFailsClosedOnUnservedArchitecture(t *testing.T) {
 
 	_, script := get(t, ts.URL+"/install.sh")
 
-	cmd := exec.Command(sh, "-")
-	cmd.Stdin = strings.NewReader(script)
-	cmd.Dir = work
-	cmd.Env = append(os.Environ(), "HOME="+work, "TMPDIR="+work, "PATH="+binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
-	out, err := cmd.CombinedOutput()
+	// A stubbed uname reports an architecture the signer does not serve,
+	// whatever the test host is.
+	_, out, err := runRenderedScript(t, script, "riscv64")
 	if err == nil {
 		t.Fatalf("install.sh succeeded on an unserved architecture\noutput:\n%s\nscript:\n%s", out, script)
 	}
