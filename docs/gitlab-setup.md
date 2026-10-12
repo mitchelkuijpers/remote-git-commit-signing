@@ -60,7 +60,7 @@ Keep these in sync:
 | Setting | Where |
 | --- | --- |
 | `SIGNER_COMMITTER_NAME` / `SIGNER_COMMITTER_EMAIL` | `/etc/git-signer/git-signer.env` on the signer VM |
-| `GIT_SIGNER_COMMITTER_NAME` / `GIT_SIGNER_COMMITTER_EMAIL` | Passed to `deploy/install-client.sh` on each agent VM |
+| `SIGNER_COMMITTER_NAME` / `SIGNER_COMMITTER_EMAIL` | Passed to `deploy/install-client.sh` on each agent VM |
 | `git config user.name` / `user.email` | Written by the installer (user-level) |
 | Verified emails on the GitLab account | GitLab → *Edit profile → Emails* |
 

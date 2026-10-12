@@ -91,9 +91,9 @@ On a persistent VM, [`deploy/install-server.sh`](deploy/install-server.sh) insta
 
 ```bash
 sudo env \
-  GIT_SIGNER_COMMITTER_NAME='Your Name' \
-  GIT_SIGNER_COMMITTER_EMAIL='you@example.com' \
-  GIT_SIGNER_ALLOWLIST='agent-*' \
+  SIGNER_COMMITTER_NAME='Your Name' \
+  SIGNER_COMMITTER_EMAIL='you@example.com' \
+  SIGNER_ALLOWLIST='agent-*' \
   deploy/install-server.sh
 ```
 
@@ -131,10 +131,10 @@ endpoints and runs it. To provision by hand instead (e.g. a client platform the 
 doesn't serve), export the same values and run the installer from a repo checkout:
 
 ```bash
-GIT_REMOTE_SIGNER_URL=https://git-signer.int.exe.xyz \
-GIT_REMOTE_SIGNER_PUBLIC_KEY=/var/lib/git-signer/signing_key.pub \
-GIT_SIGNER_COMMITTER_NAME='Your Name' \
-GIT_SIGNER_COMMITTER_EMAIL='you@example.com' \
+SIGNER_URL=https://git-signer.int.exe.xyz \
+SIGNER_PUBLIC_KEY=/var/lib/git-signer/signing_key.pub \
+SIGNER_COMMITTER_NAME='Your Name' \
+SIGNER_COMMITTER_EMAIL='you@example.com' \
   deploy/install-client.sh
 ```
 
@@ -163,7 +163,7 @@ Re-running it converges to the same state. It writes no private key, token, or s
 credential: only the binary, the public key, the client environment, and the git
 configuration. Pass `--skip-selftest` to configure without the self-test.
 
-`POST /v1/sign` requires the platform-verified VM identity, so `GIT_REMOTE_SIGNER_URL`
+`POST /v1/sign` requires the platform-verified VM identity, so `SIGNER_URL`
 must be the exe.dev peer-integration URL (or a proxy that stamps the identity). Pointing
 the self-test at the signer directly fails closed, as intended.
 
@@ -210,8 +210,8 @@ SIGNER_KEY_PATH=/tmp/demo-signing-key SIGNER_PORT="$SIGNER_PORT" \
   -vm local-demo-vm &
 until curl -fsS "http://127.0.0.1:$SIGNER_PORT/readyz" >/dev/null 2>&1; do sleep 0.1; done
 
-export GIT_REMOTE_SIGNER_URL=http://127.0.0.1:8080
-export GIT_REMOTE_SIGNER_PUBLIC_KEY=/tmp/demo-signing-key.pub
+export SIGNER_URL=http://127.0.0.1:8080
+export SIGNER_PUBLIC_KEY=/tmp/demo-signing-key.pub
 printf '%s %s %s\n' demo@example.com $(awk '{print $1, $2}' /tmp/demo-signing-key.pub) \
   >/tmp/demo-allowed-signers
 
@@ -289,12 +289,12 @@ the sign/verify request flows.
 required environment variables and an optional timeout:
 
 ```bash
-export GIT_REMOTE_SIGNER_URL=https://git-signer.int.exe.xyz   # the signer base URL
-export GIT_REMOTE_SIGNER_PUBLIC_KEY="$HOME/.config/git-remote-signer/signing.pub"
-export GIT_REMOTE_SIGN_TIMEOUT=10s   # optional; default 10s
+export SIGNER_URL=https://git-signer.int.exe.xyz   # the signer base URL
+export SIGNER_PUBLIC_KEY="$HOME/.config/git-remote-signer/signing.pub"
+export SIGNER_TIMEOUT=10s   # optional; default 10s
 ```
 
-`GIT_REMOTE_SIGNER_PUBLIC_KEY` is the *pinned* trusted key: either a literal
+`SIGNER_PUBLIC_KEY` is the *pinned* trusted key: either a literal
 authorized_keys line or a path to a file containing one. The key passed by Git as
 `-f`/`user.signingkey` must match it, and every signature returned by the server is
 verified locally against the pinned key before `<buffer>.sig` is written — atomically, via
@@ -328,7 +328,7 @@ entry or a mismatch aborts the install; an unverified download is never executed
 |---|---|
 | `git-remote-sign_0.1.0_linux_<arch>.tar.gz` | Agent VMs — consumed by `install-client.sh` |
 | `git-remote-sign-linux-<arch>` | Manual client install (`GIT_REMOTE_SIGNER_BIN=...`) |
-| `git-signer-server-linux-<arch>` | Manual server install (`GIT_SIGNER_SERVER_BIN=...`) |
+| `git-signer-server-linux-<arch>` | Manual server install (`SIGNER_SERVER_BIN=...`) |
 | `checksums.txt` | SHA-256 checksums for every asset above |
 
 Build them (verified recipe; cross-compiles cleanly, no cgo):

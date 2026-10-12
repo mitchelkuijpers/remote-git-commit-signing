@@ -47,7 +47,7 @@ config, sign, verify passthrough).
    risk below). Details: [exe-dev-setup.md](exe-dev-setup.md) and
    [security.md](security.md).
 2. **Client pin boundary.** The client never trusts a key it fetches. The public
-   signing key is *pinned* in `GIT_REMOTE_SIGNER_PUBLIC_KEY`, and every signature is
+   signing key is *pinned* in `SIGNER_PUBLIC_KEY`, and every signature is
    verified locally against that pinned key before it is written. A compromised or
    misconfigured server cannot substitute a key.
 3. **Signer boundary.** The private key exists only on the signer VM, readable only
@@ -70,7 +70,7 @@ nothing reaches the signing backend before every earlier check has passed.
 2. `git-remote-sign` reads the buffer bytes (the commit signing payload: `tree`,
    `parent`, `author`, `committer`, blank line, message — with any `gpgsig` header
    stripped) and checks that the `-f` key equals its pinned key.
-3. It `POST`s the exact bytes to `GIT_REMOTE_SIGNER_URL/v1/sign` as
+3. It `POST`s the exact bytes to `SIGNER_URL/v1/sign` as
    `application/octet-stream`.
 4. The request traverses the exe.dev peer proxy, which sets the platform-verified
    `X-Exedev-Source-Vm` header.
@@ -144,6 +144,7 @@ Backup, rotation and recovery: [key-lifecycle.md](key-lifecycle.md).
 | `SIGNER_PORT` | no | `8000` | TCP listen port |
 | `SIGNER_RATE_PER_MIN` | no | `60` | Sustained per-VM signing rate (tokens/minute) |
 | `SIGNER_RATE_BURST` | no | `10` | Per-VM token bucket capacity (largest instantaneous burst) |
+| `SIGNER_URL` | no | `https://git-signer.int.exe.xyz` | Signer base URL rendered into `/install.sh` and the landing page; must be the exe.dev peer URL (absolute `http`/`https` with a host; empty uses the https default) |
 
 Internal limits not exposed as environment variables: maximum signing payload
 `1 MiB`, per-request signing timeout `5s`, HTTP server timeouts (read-header
@@ -154,46 +155,47 @@ Internal limits not exposed as environment variables: maximum signing payload
 
 | Environment variable | Required | Default | Meaning |
 | --- | --- | --- | --- |
-| `GIT_REMOTE_SIGNER_URL` | yes | — | Signer base URL (`http`/`https`); in production the exe.dev peer URL |
-| `GIT_REMOTE_SIGNER_PUBLIC_KEY` | yes | — | Pinned trusted public key: a literal authorized_keys line, or a path to a file containing one |
-| `GIT_REMOTE_SIGN_TIMEOUT` | no | `10s` | Timeout for one HTTP round trip to the signer |
+| `SIGNER_URL` | yes | — | Signer base URL (`http`/`https`); in production the exe.dev peer URL |
+| `SIGNER_PUBLIC_KEY` | yes | — | Pinned trusted public key: a literal authorized_keys line, or a path to a file containing one |
+| `SIGNER_TIMEOUT` | no | `10s` | Timeout for one HTTP round trip to the signer |
 
 Internal limits: signature response body capped at `64 KiB`; local verification
 invocation capped at `10s`.
 
 ### Deployment scripts
 
+Per ADR-0001 the legacy installer name-mapping layer is gone: installer inputs
+use the same `SIGNER_*` names verbatim.
+
 `deploy/install-server.sh` (run as root; `--no-start`, `--skip-key`; stage with
-`DESTDIR`):
+`DESTDIR`) consumes the server settings directly — `SIGNER_COMMITTER_NAME`,
+`SIGNER_COMMITTER_EMAIL` and `SIGNER_ALLOWLIST` are required for a real install,
+and `SIGNER_PORT`, `SIGNER_RATE_PER_MIN`, `SIGNER_RATE_BURST` are passed through
+to the generated env file. Installer-only knobs:
 
 | Variable | Required | Default | Meaning |
 | --- | --- | --- | --- |
-| `GIT_SIGNER_COMMITTER_NAME` | yes (real install) | — | Written to `SIGNER_COMMITTER_NAME` |
-| `GIT_SIGNER_COMMITTER_EMAIL` | yes (real install) | — | Written to `SIGNER_COMMITTER_EMAIL` |
-| `GIT_SIGNER_ALLOWLIST` | yes (real install) | — | Written to `SIGNER_ALLOWLIST` |
-| `GIT_SIGNER_USER` / `GIT_SIGNER_GROUP` | no | `git-signer` | Service account |
-| `GIT_SIGNER_KEY_DIR` / `GIT_SIGNER_KEY_NAME` | no | `/var/lib/git-signer` / `signing_key` | Key location |
-| `GIT_SIGNER_CONF_DIR` | no | `/etc/git-signer` | Env-file directory |
-| `GIT_SIGNER_PORT` | no | server default (`8000`) | Written as `SIGNER_PORT` |
-| `GIT_SIGNER_RATE_PER_MIN` / `GIT_SIGNER_RATE_BURST` | no | server defaults (`60`/`10`) | Written as the matching `SIGNER_*` settings |
-| `GIT_SIGNER_SERVER_BIN` | no | — | Prebuilt server binary to install (otherwise built from the repo, or found next to the script / in the repo root) |
-| `GIT_SIGNER_REPO_DIR` | no | repo root | Source tree used to build the binary |
+| `SIGNER_USER` / `SIGNER_GROUP` | no | `git-signer` | Service account |
+| `SIGNER_KEY_DIR` / `SIGNER_KEY_NAME` | no | `/var/lib/git-signer` / `signing_key` | Key location |
+| `SIGNER_CONF_DIR` | no | `/etc/git-signer` | Env-file directory |
+| `SIGNER_SERVER_BIN` | no | — | Prebuilt server binary to install (otherwise built from the repo, or found next to the script / in the repo root) |
+| `SIGNER_REPO_DIR` | no | repo root | Source tree used to build the binary |
 
 `deploy/install-client.sh` (`--skip-selftest`):
 
 | Variable | Required | Default | Meaning |
 | --- | --- | --- | --- |
-| `GIT_REMOTE_SIGNER_URL` | yes | — | Signer base URL persisted to the client env file |
-| `GIT_REMOTE_SIGNER_PUBLIC_KEY` | yes | — | Pinned key (line or file), installed and cross-checked against `/v1/public-key` |
-| `GIT_SIGNER_COMMITTER_NAME` | yes | — | Written to `git config --global user.name` |
-| `GIT_SIGNER_COMMITTER_EMAIL` | yes | — | Written to `git config --global user.email` |
+| `SIGNER_URL` | yes | — | Signer base URL persisted to the client env file |
+| `SIGNER_PUBLIC_KEY` | yes | — | Pinned key (line or file), installed and cross-checked against `/v1/public-key` |
+| `SIGNER_COMMITTER_NAME` | yes | — | Written to `git config --global user.name` |
+| `SIGNER_COMMITTER_EMAIL` | yes | — | Written to `git config --global user.email` |
 | `GIT_REMOTE_SIGNER_BIN` | no | — | Local binary to install (skips the download) |
 | `GIT_REMOTE_SIGNER_RELEASE_VERSION` | no | `v0.1.0` | Release tag to download |
 | `GIT_REMOTE_SIGNER_DOWNLOAD_BASE` | no | this repo's GitHub releases | Download base URL |
 | `GIT_REMOTE_SIGNER_INSTALL_DIR` | no | `$HOME/.local/bin` | Binary directory |
 | `GIT_REMOTE_SIGNER_CONFIG_DIR` | no | `$XDG_CONFIG_HOME/git-remote-signer` | Config directory |
 | `GIT_REMOTE_SIGNER_PROFILE` | no | `$HOME/.profile` | Login profile that sources the env file |
-| `GIT_REMOTE_SIGN_TIMEOUT` | no | unset (client default `10s`) | Persisted to the client env file when set |
+| `SIGNER_TIMEOUT` | no | unset (client default `10s`) | Persisted to the client env file when set |
 
 ### HTTP API
 

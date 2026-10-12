@@ -391,6 +391,9 @@ verifiable authorization mechanism.
 
 ### 8. Client configuration
 
+(Historical: env names were unified to the `SIGNER_*` family; see
+[docs/adr/0001](adr/0001-one-signer-env-family.md))
+
 Make the client configuration extremely simple.
 
 The following environment variables should be sufficient:
