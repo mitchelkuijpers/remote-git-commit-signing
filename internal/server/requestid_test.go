@@ -12,7 +12,8 @@ import (
 
 // TestRequestIDOnResponseAndAuditLine covers the per-request identifier: every
 // response carries X-Request-Id, each request gets a fresh value, and the
-// signing audit line records the same identifier as the response header.
+// signing audit line records the same identifier as the response header,
+// built over a server.HandlerConfig like every other signing test.
 func TestRequestIDOnResponseAndAuditLine(t *testing.T) {
 	signer, publicKey := newSigner(t)
 	var buf bytes.Buffer
