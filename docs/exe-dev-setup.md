@@ -24,17 +24,21 @@ On the signer VM:
 sudo env \
   SIGNER_COMMITTER_NAME='Your Name' \
   SIGNER_COMMITTER_EMAIL='you@example.com' \
-  SIGNER_ALLOWLIST='agent-*' \
+  SIGNER_ALLOWLIST='*' \
   deploy/install-server.sh
 ```
 
 The server listens on port `8000`, which is the default exe.dev web port, so the
 integration target needs no port suffix. `SIGNER_ALLOWLIST` is the *second*
-authorization layer on top of the integration: only VM names matching it are
-allowed to sign, and it is fail-closed. To make integration attachment the only
-gate, set it to `*` (matches every VM) — the tradeoff: any VM ever attached,
+authorization layer on top of the integration: only source-VM identities matching
+it are allowed to sign, and it is fail-closed. The integration attaches by **tag**,
+while the Allowlist matches the **source-VM identity** — a VM *name*, a different
+namespace — so an entry such as `agent-*` matches only names beginning with
+`agent-`, not every tagged VM. The example above uses `*`, which makes
+authenticated attachment the only gate: the tradeoff is that any VM ever attached,
 including a forgotten tagged one, can sign under the pinned identity. The
-reference deployment uses `*` and relies on tag hygiene plus the audit log.
+reference deployment uses `*` and relies on tag hygiene plus the audit log; narrow
+it to an exact VM name (for example `builder-1`) when you want per-VM scoping.
 
 The installer also cross-compiles the client for both Linux architectures and
 installs it, with `install-client.sh`, into `SIGNER_DIST_DIR`
@@ -98,9 +102,12 @@ That hostname always resolves through the authenticated peer proxy; the port is 
 target VM's web port (`8000` by default). Check it from the agent VM:
 
 ```bash
-curl -s https://git-signer.int.exe.xyz/healthz          # -> ok
-curl -s https://git-signer.int.exe.xyz/v1/public-key    # -> the public signing key
+curl -fsS https://git-signer.int.exe.xyz/healthz          # -> ok
+curl -fsS https://git-signer.int.exe.xyz/v1/public-key    # -> the public signing key
 ```
+
+`-f` makes a proxy `403` (integration not attached) fail loudly instead of piping an
+error body onward.
 
 Reaching the signer any other way (for example `https://SIGNER_VM.exe.xyz`
 directly) does not carry the verified identity, so `POST /v1/sign` refuses it with
@@ -108,14 +115,22 @@ directly) does not carry the verified identity, so `POST /v1/sign` refuses it wi
 
 ## Per-VM story
 
-Provisioning a new agent VM is a tag and one command:
+Provisioning a new agent VM is a tag, a preflight, and one command:
 
 ```bash
 # once per VM, if it does not already carry the tag
 ssh exe.dev tag "$(hostname)" agent
 
+# preflight: the bootstrap is served through the authenticated peer proxy
+curl -fsS https://git-signer.int.exe.xyz/healthz    # -> ok
 curl -fsSL https://git-signer.int.exe.xyz/install.sh | sh
 ```
+
+A VM with no integration attached is refused at the edge with `403` before the
+signer runs, so `/install.sh` is never served. Piping `curl` into `sh` hides that:
+the fetch fails, `sh` receives an empty script, and the bootstrap silently does
+nothing. When a bootstrap appears to do nothing, check the preflight first — the
+cause is almost always the missing integration, not the client.
 
 `/install.sh` is rendered by the signer with the pinned configuration baked
 in — signer URL, public key, and committer identity. It detects the CPU
