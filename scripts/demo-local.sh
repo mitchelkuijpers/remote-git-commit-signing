@@ -120,8 +120,8 @@ git init -q -b main "$repo"
 export HOME="$work"
 export GIT_CONFIG_GLOBAL=/dev/null
 export GIT_CONFIG_NOSYSTEM=1
-export GIT_REMOTE_SIGNER_URL="$proxy_url"
-export GIT_REMOTE_SIGNER_PUBLIC_KEY="$pub"
+export SIGNER_URL="$proxy_url"
+export SIGNER_PUBLIC_KEY="$pub"
 git -C "$repo" config user.name "$name"
 git -C "$repo" config user.email "$email"
 git -C "$repo" config gpg.format ssh
