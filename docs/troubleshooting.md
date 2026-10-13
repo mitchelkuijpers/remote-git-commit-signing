@@ -28,7 +28,7 @@ journalctl -u git-signer.service -f | grep sign_request
 | Field | Meaning |
 | --- | --- |
 | `outcome` | `signed`, `rejected` (4xx), or `failed` (5xx) |
-| `vm` | The platform-verified source VM identity (empty when the identity header was missing) |
+| `vm` | The platform-verified source VM identity (empty when the trust header was missing) |
 | `request_id` | Per-request identifier, also returned in the `X-Request-Id` response header — correlate a client report with this log line |
 | `payload_sha256` | SHA-256 of the exact payload bytes — correlate with a commit to see who signed it |
 | `payload_bytes` | Payload size |
@@ -93,26 +93,61 @@ Causes and fixes, in order:
 
 The client does not retry and has no unsigned fallback: it fails the commit.
 
-### Identity missing (401) / foreign (403)
+### Identity missing (401)
 
 ```text
 error: git-remote-sign: signer returned 401 Unauthorized: missing VM identity
+```
+
+The request reached the signer without the trust header. Either the URL is not
+the peer-integration URL (a direct request is refused by design), or a proxy between the VM
+and the signer stripped the header.
+
+### 403 from the edge proxy vs. from the signer
+
+Both layers can answer `403`, and they mean different things.
+
+**Edge/proxy `403` — the integration is not attached.** The bootstrap and every signer
+endpoint are served through the authenticated exe.dev peer proxy. A VM with no integration
+attached (no `agent` tag, or no per-VM attachment) is refused at the edge before the signer
+sees the request:
+
+```text
+curl: (22) The requested URL returned error: 403
+```
+
+Because the documented bootstrap pipes `curl` into `sh`, this is masked: `sh` receives an
+empty script and installs nothing. The tells are that the reachability preflight fails the
+same way and the signer's audit log records **no** `sign_request` line for the attempt.
+
+```bash
+curl -fsS https://git-signer.int.exe.xyz/healthz      # 403 here: fix the integration, not the client
+ssh exe.dev integrations attach git-signer tag:agent  # then tag this VM
+ssh exe.dev tag "$(hostname)" agent
+```
+
+**Signer `403` — the source-VM identity is not allowlisted.** Here the identity reached the
+signer but does not match `SIGNER_ALLOWLIST`. The client reports:
+
+```text
 error: git-remote-sign: signer returned 403 Forbidden: VM identity not allowed
 ```
 
-- **401** means the request reached the server without the platform identity header.
-  Either the URL is not the peer-integration URL (a direct request is refused by
-  design), or a proxy between the VM and the signer stripped the header.
-- **403** means the VM *does* have an identity but it does not match
-  `SIGNER_ALLOWLIST`. The audit line shows the VM name in `vm`:
+The audit line records the exact source-VM identity in `vm` — read it, do not guess it from
+the tag:
 
-  ```bash
-  journalctl -u git-signer.service -n 5 --no-pager | grep '"status":403'
-  ```
+```bash
+journalctl -u git-signer.service -n 5 --no-pager | grep '"status":403'
+# {"time":"...","event":"sign_request","outcome":"rejected","vm":"mitchel-podiumarchief",...}
+```
 
-  Add the VM name (or a glob such as `agent-*`) to `SIGNER_ALLOWLIST` in
-  `/etc/git-signer/git-signer.env` and `sudo systemctl restart git-signer.service`.
-  Remember the allowlist is fail-closed: empty admits nobody.
+Then add that VM name (or set `*`) to `SIGNER_ALLOWLIST` in
+`/etc/git-signer/git-signer.env` and `sudo systemctl restart git-signer.service`. The
+integration attaches by **tag**, but the Allowlist matches the **source-VM identity** (a
+name), so a glob such as `agent-*` matches only names beginning with `agent-`. Either
+allowlist the exact name from the audit line, or set `SIGNER_ALLOWLIST='*'` to make
+authenticated attachment the only gate — the tradeoff being that any attached VM can then
+sign. The allowlist stays fail-closed: empty admits nobody.
 
 ### Rate limited (429)
 
