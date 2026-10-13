@@ -25,6 +25,9 @@ profile.cov
 go.work
 go.work.sum
 
+# Release build output (scripts/build-release.sh)
+dist/
+
 # env file
 .env
 

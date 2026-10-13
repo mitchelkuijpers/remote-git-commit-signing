@@ -1,0 +1,73 @@
+# Release pipeline: on a pushed v* tag (or a manual dispatch naming one), run
+# the test suite, build the release artifacts with the canonical recipe, and
+# attach them to the GitHub release. The release is published immediately —
+# the download path in deploy/install-client.sh is checksum-fail-closed, so
+# there is no draft gate to justify. The GitHub release is the canonical
+# artifact store; the signer's dist directory is refreshed from it (see
+# README "Release artifacts").
+#
+# Two checkouts, on purpose: the built code comes from the tag tree, but the
+# recipe (scripts/build-release.sh) comes from the ref this workflow runs on.
+# Tags cut before the recipe existed (v0.1.0) can then still be dispatched to
+# backfill their assets — the recipe is tooling, not product, so it is always
+# the workflow's own copy that runs against the tagged source.
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to build (e.g. v0.2.0); existing releases get their assets replaced"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    env:
+      TAG: ${{ inputs.tag || github.ref_name }}
+    steps:
+      - name: Check out the tagged source
+        uses: actions/checkout@v4
+        with:
+          # On dispatch, build the requested tag; on tag push, the ref.
+          ref: ${{ inputs.tag || github.ref }}
+          path: src
+
+      - name: Check out the recipe from this workflow's ref
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref }}
+          path: recipe
+          sparse-checkout: scripts/build-release.sh
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: src/go.mod
+
+      - name: Test gate
+        working-directory: src
+        run: |
+          go vet ./...
+          go test ./...
+
+      - name: Build artifacts
+        working-directory: src
+        run: sh ../recipe/scripts/build-release.sh "$TAG"
+
+      - name: Attach to release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        working-directory: src
+        run: |
+          version=${TAG#v}
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" "dist/v$version/*" --clobber
+          else
+            gh release create "$TAG" "dist/v$version/*" --title "$TAG" --generate-notes
+          fi
