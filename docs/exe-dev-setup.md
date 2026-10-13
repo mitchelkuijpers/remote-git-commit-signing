@@ -42,7 +42,9 @@ installs it, with `install-client.sh`, into `SIGNER_DIST_DIR`
 `/v1/client/...` so agent VMs can bootstrap with nothing but the signer URL
 (skip with `SIGNER_SKIP_DIST=1`). Because server and client come from the
 same source tree in the same installer run, the served client cannot silently
-skew from the server.
+skew from the server. To move the served client to a released version afterwards,
+refresh the directory from the GitHub release (see
+[README · Release artifacts](../README.md#release-artifacts)).
 
 ## 2. Create the peer integration
 

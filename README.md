@@ -310,8 +310,15 @@ loudly rather than being mishandled.
 
 ## Release artifacts
 
-Releases are cut from a tag; `deploy/install-client.sh` downloads and checksum-verifies the
-client artifact unless you pass a local binary. For tag `vX.Y.Z` it expects, under
+Releases are cut by pushing a `vX.Y.Z` tag: [`.github/workflows/release.yml`](.github/workflows/release.yml)
+runs the test suite, builds the artifacts with the canonical recipe
+([`scripts/build-release.sh`](scripts/build-release.sh)), and attaches them to the
+release — published immediately, no draft gate (the download path is checksum-fail-closed).
+Dispatching the workflow manually with a tag rebuilds that tag's assets, which is how the
+asset-less v0.1.0 release gets backfilled.
+
+`deploy/install-client.sh` downloads and checksum-verifies the client artifact unless you
+pass a local binary. For tag `vX.Y.Z` it expects, under
 `$GIT_REMOTE_SIGNER_DOWNLOAD_BASE/vX.Y.Z/` (default: this repository's GitHub releases):
 
 ```text
@@ -322,45 +329,37 @@ checksums.txt                              # sha256sum format
 where `<os>` is `linux` or `darwin` and `<arch>` is `amd64` or `arm64`. A missing checksum
 entry or a mismatch aborts the install; an unverified download is never executed.
 
-**v0.1.0** publishes, for linux/amd64 and linux/arm64:
+Every release publishes:
 
 | Asset | For |
 |---|---|
-| `git-remote-sign_0.1.0_linux_<arch>.tar.gz` | Agent VMs — consumed by `install-client.sh` |
-| `git-remote-sign-linux-<arch>` | Manual client install (`GIT_REMOTE_SIGNER_BIN=...`) |
+| `git-remote-sign_X.Y.Z_<os>_<arch>.tar.gz` | Agent VMs — consumed by `install-client.sh` |
+| `git-remote-sign-<os>-<arch>` | Raw client binary — the signer's dist directory serves the linux ones; manual install (`GIT_REMOTE_SIGNER_BIN=...`) |
 | `git-signer-server-linux-<arch>` | Manual server install (`SIGNER_SERVER_BIN=...`) |
 | `checksums.txt` | SHA-256 checksums for every asset above |
 
-Build them (verified recipe; cross-compiles cleanly, no cgo):
+The same set can be built by hand with `scripts/build-release.sh vX.Y.Z` (writes
+`dist/vX.Y.Z/`). The artifact names are pinned by
+[`scripts/build_release_test.go`](scripts/build_release_test.go) so the recipe and its
+consumers cannot drift.
+
+### Refreshing the signer's dist directory
+
+Agent VMs download their binary from the signer (`/v1/client/...`), which needs no
+credentials — this GitHub instance rejects anonymous downloads, so releases are not
+directly reachable from a fresh VM. The GitHub release is therefore the canonical artifact
+store, and the signer's dist directory is refreshed from it. After cutting a release, run
+on the signer VM:
 
 ```bash
-VERSION=0.1.0
-mkdir -p dist
-for arch in amd64 arm64; do
-  CGO_ENABLED=0 GOOS=linux GOARCH="$arch" go build -trimpath \
-    -o "dist/git-remote-sign-linux-$arch" ./cmd/git-remote-sign
-  CGO_ENABLED=0 GOOS=linux GOARCH="$arch" go build -trimpath \
-    -o "dist/git-signer-server-linux-$arch" ./cmd/git-signer-server
-done
-
-mkdir -p "dist/v$VERSION"
-for arch in amd64 arm64; do
-  staged=$(mktemp -d)
-  cp "dist/git-remote-sign-linux-$arch" "$staged/git-remote-sign"
-  tar -czf "dist/v$VERSION/git-remote-sign_${VERSION}_linux_${arch}.tar.gz" \
-    -C "$staged" git-remote-sign
-  rm -rf "$staged"
-done
-cp dist/git-remote-sign-linux-* dist/git-signer-server-linux-* "dist/v$VERSION/"
-(cd "dist/v$VERSION" && sha256sum \
-  git-remote-sign_${VERSION}_linux_amd64.tar.gz \
-  git-remote-sign_${VERSION}_linux_arm64.tar.gz \
-  git-remote-sign-linux-amd64 git-remote-sign-linux-arm64 \
-  git-signer-server-linux-amd64 git-signer-server-linux-arm64 > checksums.txt)
+gh release download vX.Y.Z \
+  --pattern 'git-remote-sign-linux-*' \
+  --directory /usr/local/lib/git-signer/dist
 ```
 
-Attach everything in `dist/v$VERSION/` to the `v$VERSION` release. Until the release is
-published, install a locally built binary with `GIT_REMOTE_SIGNER_BIN=./git-remote-sign`.
+The directory also holds `install-client.sh` from the repo checkout; the refresh replaces
+only the binaries. Until a release's assets exist, install a locally built binary with
+`GIT_REMOTE_SIGNER_BIN=./git-remote-sign`.
 
 ## Status
 

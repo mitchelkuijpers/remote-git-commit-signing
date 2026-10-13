@@ -1,0 +1,55 @@
+# Release pipeline: on a pushed v* tag (or a manual dispatch naming one), run
+# the test suite, build the release artifacts with the canonical recipe, and
+# attach them to the GitHub release. The release is published immediately —
+# the download path in deploy/install-client.sh is checksum-fail-closed, so
+# there is no draft gate to justify. The GitHub release is the canonical
+# artifact store; the signer's dist directory is refreshed from it (see
+# README "Release artifacts").
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to build (e.g. v0.2.0); existing releases get their assets replaced"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    env:
+      TAG: ${{ inputs.tag || github.ref_name }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # On dispatch, build the requested tag; on tag push, the ref.
+          ref: ${{ inputs.tag || github.ref }}
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Test gate
+        run: |
+          go vet ./...
+          go test ./...
+
+      - name: Build artifacts
+        run: scripts/build-release.sh "$TAG"
+
+      - name: Attach to release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version=${TAG#v}
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" "dist/v$version/*" --clobber
+          else
+            gh release create "$TAG" "dist/v$version/*" --title "$TAG" --generate-notes
+          fi
